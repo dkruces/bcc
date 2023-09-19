@@ -1,0 +1,48 @@
+Example:
+
+1. Test: Run fio with different block sizes and sizes to be written:
+
+fio -bs=4k -iodepth=1 -rw=write -ioengine=sync -size=4k -name=sync -direct=1 -filename=/dev/nvme0n1
+fio -bs=8k -iodepth=1 -rw=write -ioengine=sync -size=8k -name=sync -direct=1 -filename=/dev/nvme0n1
+fio -bs=16k -iodepth=1 -rw=write -ioengine=sync -size=16k -name=sync -direct=1 -filename=/dev/nvme0n1
+fio -bs=32k -iodepth=1 -rw=write -ioengine=sync -size=32k -name=sync -direct=1 -filename=/dev/nvme0n1
+fio -bs=64k -iodepth=1 -rw=write -ioengine=sync -size=64k -name=sync -direct=1 -filename=/dev/nvme0n1
+fio -bs=128k -iodepth=1 -rw=write -ioengine=sync -size=128k -name=sync -direct=1 -filename=/dev/nvme0n1
+fio -bs=256k -iodepth=1 -rw=write -ioengine=sync -size=256k -name=sync -direct=1 -filename=/dev/nvme0n1
+fio -bs=512k -iodepth=1 -rw=write -ioengine=sync -size=512k -name=sync -direct=1 -filename=/dev/nvme0n1
+
+Trace: Run nvmeblk.py to trace write block requests on nvme0n1:
+
+./nvmeblk.py --ops 1 --disk nvme0n1
+Tracing NVMe requests... Hit Ctrl-C to end.
+DISK       REQ      LEN      LBA        PID        COMM             ALGN
+nvme0n1    1        4096     0          102218     fio              4096
+nvme0n1    1        8192     0          102222     fio              8192
+nvme0n1    1        16384    0          102225     fio              16384
+nvme0n1    1        32768    0          102228     fio              32768
+nvme0n1    1        65536    0          102233     fio              65536
+nvme0n1    1        131072   0          102250     fio              131072
+nvme0n1    1        262144   0          102253     fio              262144
+nvme0n1    1        524288   0          102256     fio              524288
+^C
+     Block size          : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 513      |****************************************|
+      8192 -> 16383      : 33       |**                                      |
+     16384 -> 32767      : 97       |*******                                 |
+     32768 -> 65535      : 81       |******                                  |
+     65536 -> 131071     : 49       |***                                     |
+    131072 -> 262143     : 17       |*                                       |
+    262144 -> 524287     : 1        |                                        |
+    524288 -> 1048575    : 1        |                                        |
