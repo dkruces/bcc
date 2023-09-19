@@ -261,6 +261,10 @@ class SmokeTests(TestCase):
         else:
             pass
 
+    @skipUnless(kernel_version_ge(4,19), "requires kernel >= 4.19")
+    def test_nvmeiuwaf(self):
+        self.run_with_duration("nvmeiuwaf.py")
+
     @skipUnless(kernel_version_ge(4,6), "requires kernel >= 4.6")
     @mayFail("This fails on github actions environment, and needs to be fixed")
     def test_offcputime(self):
