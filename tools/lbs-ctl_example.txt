@@ -1,0 +1,52 @@
+root@debian:~/lbs# ./lbs-ctl --dev /dev/nvme0n1 nvme-cmd-len
+2023-09-13 19:55:13 - INFO     - Large Block Size Analysis tool
+Attaching 3 probes...
+Tracing NVMe command size... Hit Ctrl-C to end.
+^C
+
+--------------------------------------------------------------------------------
+Tracing completed:
+* Disk:               nvme0n1
+* Aligned block size: 16384
+* Request operation:  1
+
+Aligned operations:
+@align_op[16384]: 520921
+@nalign_op[16384]: 203
+
+Block size histogram:
+@data_len:
+[4K, 8K)             202 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)        396066 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[32K, 64K)        100991 |@@@@@@@@@@@@@                                       |
+[64K, 128K)        22825 |@@                                                  |
+[128K, 256K)        1040 |                                                    |
+
+
+Block sizes list:
+@data_aligned[114688]: 770
+@data_aligned[131072]: 1039
+@data_aligned[98304]: 1480
+@data_aligned[81920]: 4752
+@data_aligned[65536]: 15823
+@data_aligned[49152]: 27950
+@data_aligned[32768]: 73041
+@data_aligned[16384]: 396066
+@data_naligned[131072]: 1
+@data_naligned[4096]: 202
+
+List of processes:
+@comm[kworker/2:0]: 1
+@comm[kworker/2:1H]: 2
+@comm[kworker/3:1H]: 2
+@comm[umount]: 3
+@comm[kworker/2:2]: 11
+@comm[mount]: 16
+@comm[xfsaild/nvme0n1]: 18
+@comm[kworker/u8:3]: 63
+@comm[kworker/u8:0]: 114
+@comm[kworker/u8:8]: 181
+@comm[mkfs.xfs]: 429
+@comm[fsx]: 520284
+--------------------------------------------------------------------------------

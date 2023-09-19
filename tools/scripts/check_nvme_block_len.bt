@@ -1,0 +1,117 @@
+#!/usr/bin/bpftrace
+// SPDX-License-Identifier: Apache-2.0
+/*
+ * Observability of the block size for a given operation and drive to check for
+ * alignment in size and Logical Block Address (LBA) of a given boundary (in
+ * bytes).
+ *
+ * Notes:
+ * Use of associative arrays in align_op and nalign_op to workaround issue
+ * when clearing, bpftrace will print anyway the variable.
+ *
+ * Required arguments (for kprobe:nvme_setup_cmd):
+ * - $1: Disk name to check (e.g. nvme0n1).
+ * - $2: Request disk operation [^req_op] (e.g. 1).
+ * - $3: Boundary (block size; power of 2) to monitor in size and LBA.
+ * - $4: Enable debug traces.
+ *
+ * [^req_op]: Example 1 == "REQ_OP_WRITE". More in req_op enum at
+ * 'include/linux/blk_types.h' file).
+ *
+ * Copyright (c) 2023 Samsung Electronics Co., Ltd. All Rights Reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License")
+ *
+ * Author:
+ * Daniel Gomez <da.gomez@samsung.com>
+ */
+#ifndef BPFTRACE_HAVE_BTF
+#include <linux/blk-mq.h>
+#include "drivers/nvme/host/nvme.h"
+#endif /* BPFTRACE_HAVE_BTF */
+
+BEGIN
+{
+	@filt_disk = str($1);
+	@rop = $2;
+	@alig_size = (uint32)$3;
+	@debug = $4;
+	printf("Tracing NVMe command size... Hit Ctrl-C to end.\n");
+	if (@debug) {
+		printf("Debug mode enabled\n");
+		printf("Boundary/alignment: %u\n", $3);
+		printf("%-9s %-6s %-10s %-8s %-6s %-16s\n", "DISK", "ALIGN", "LBA", "LEN", "OP", "COMM");
+	}
+}
+
+kprobe:nvme_setup_cmd
+{
+	$req = (struct request *)arg1;
+	$disk = $req->q->disk->disk_name;
+
+	if ($disk != str($1)) {
+		return;
+	}
+
+	$req_op = $req->cmd_flags & 0xff;
+	if ($req_op != $2) {
+		return;
+	}
+
+	$ns = (struct nvme_ns *)arg0;
+	$lba_len = (uint32)($3/4096);
+	$sector_shift = 9;
+
+	$lba = $req->__sector >> ($ns->lba_shift - $sector_shift);
+	$block_len = $req->__data_len;
+	$aligned = (!($block_len % @alig_size)) && (!($lba % $lba_len));
+
+	if ($aligned) {
+		@align_op[@alig_size] = count();
+		@data_aligned[$block_len] = count();
+	} else {
+		@nalign_op[@alig_size] = count();
+		@data_naligned[$block_len] = count();
+	}
+
+	if (@debug) {
+		printf("%-9s %-6u %-10u %-8u %-6u %-16s\n", $disk, $aligned, $lba, $block_len, $req_op, comm);
+	}
+
+	@comm[comm] = count();
+	@data_len = hist($block_len);
+}
+
+END
+{
+	printf("\n\n--------------------------------------------------------------------------------");
+	printf("\nTracing completed:\n");
+	printf("* Disk: %21s\n* Aligned block size: %u\n* Request operation: %2u", @filt_disk, @alig_size, @rop);
+
+	printf("\n\nAligned operations:\n");
+	print(@align_op);
+	print(@nalign_op);
+
+	printf("\nBlock size histogram:\n");
+	print(@data_len);
+
+	printf("\nBlock sizes list:\n");
+	print(@data_aligned);
+	print(@data_naligned);
+
+	printf("\nList of processes:\n");
+	print(@comm);
+	printf("--------------------------------------------------------------------------------");
+
+	clear(@data_aligned);
+	clear(@data_naligned);
+	clear(@comm);
+	delete(@data_len);
+	delete(@rop);
+	delete(@filt_disk);
+	delete(@alig_size);
+	clear(@align_op);
+	clear(@nalign_op);
+	clear(@data_len);
+	delete(@data_len);
+	delete(@debug);
+}

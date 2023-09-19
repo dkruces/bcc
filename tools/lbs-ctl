@@ -1,0 +1,557 @@
+#!/usr/bin/python3
+"""Large Block Size Observability tool."""
+# SPDX-License-Identifier: Apache-2.0
+# lbs-ctl: Command line tool for tracking and observe Large Block Sizes in
+# the Linux storage stack.
+#
+# https://kernelnewbies.org/KernelProjects/large-block-size
+#
+# Copyright (c) 2023 Samsung Electronics Co., Ltd. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 (the "License")
+#
+# Author:
+# Daniel Gomez <da.gomez@samsung.com>
+
+from __future__ import print_function
+
+import argparse
+import json
+import logging
+import os
+import subprocess
+import sys
+from time import sleep
+
+from bcc import BPF
+
+try:
+    import colorlog
+
+    HAVE_COLORLOG = True
+except ImportError:
+    HAVE_COLORLOG = False
+    pass
+
+__version__ = "0.1"
+
+b = BPF(
+    text="""
+"""
+)
+
+
+def blk_mq_prog(args: argparse.Namespace) -> str:
+    """List of blk-mq probes.
+
+    - blk_execute_rq_nowait:
+
+    hardware:*blk_execute_rq_nowait:
+    kfunc:blk_execute_rq_nowait
+        struct request * rq
+        bool at_head
+    kprobe:blk_execute_rq_nowait
+    software:*blk_execute_rq_nowait:
+
+    - nvme_setup_cmd:
+
+    hardware:*nvme_setup_cmd*:
+    kfunc:__traceiter_nvme_setup_cmd
+        void * __data
+        struct request * req
+        struct nvme_command * cmd
+        int retval
+    kfunc:nvme_setup_cmd
+        struct nvme_ns * ns
+        struct request * req
+        blk_status_t retval
+    kprobe:__traceiter_nvme_setup_cmd
+    kprobe:nvme_setup_cmd
+    software:*nvme_setup_cmd*:
+    tracepoint:nvme:nvme_setup_cmd
+        char disk[32]
+        int ctrl_id
+        int qid
+        u8 opcode
+        u8 flags
+        u8 fctype
+        u16 cid
+        u32 nsid
+        bool metadata
+        u8 cdw10[24]
+    """
+    fc = {
+        "kprobe__blk_execute_rq_nowait": "void kprobe__blk_execute_rq_nowait(struct pt_regs *ctx, struct request *req)",
+        "kprobe__nvme_setup_cmd": "void kprobe__nvme_setup_cmd(struct pt_regs *ctx, struct nvme_ns *ns, struct request *req)",
+    }
+    probe = fc[args.probes]
+
+    prog = """
+    #include <uapi/linux/ptrace.h>
+    #include <linux/blk-mq.h>
+    #include <linux/bio.h>
+
+    struct blk_mq_data_t {{
+        char comm[TASK_COMM_LEN];
+        /* struct bvec_iter */
+        u32 bi_size;
+        /* struct bio */
+        u16 bi_vcnt;
+        /* bio.h */
+        u16 bio_max_vecs;
+        /* struct request */
+        u16 nr_phys_segments;
+        u32 __data_len;
+    }};
+
+    BPF_PERF_OUTPUT(blk_mq_events);
+    BPF_HISTOGRAM(bv_len, u16, 64);
+    BPF_HASH(bv_len_last, u16, u16, 10240);
+
+    {kprobe}
+    {{
+            struct blk_mq_data_t blk_mq_data = {{}};
+            u16 i, aux;
+
+            bpf_get_current_comm(&blk_mq_data.comm, sizeof(blk_mq_data.comm));
+            blk_mq_data.bi_size = req->bio->bi_iter.bi_size;
+            blk_mq_data.bi_vcnt = req->bio->bi_vcnt;
+            blk_mq_data.bio_max_vecs = BIO_MAX_VECS;
+            blk_mq_data.nr_phys_segments = req->nr_phys_segments;
+            blk_mq_data.__data_len = req->__data_len;
+
+            blk_mq_events.perf_submit(ctx, &blk_mq_data, sizeof(blk_mq_data));
+
+            for (i=0; i<BIO_MAX_VECS; i++) {{
+                    u16 idx=i; /* Avoid infinit loop detection in BCC */
+                    if (i >= req->bio->bi_vcnt)
+                            break;
+                    aux = req->bio->bi_io_vec[i].bv_len;
+                    if (aux == 0)
+                            break;
+                    bv_len.increment(bpf_log2l(aux));
+                    bv_len_last.lookup_or_try_init(&idx, &aux);
+            }}
+    }}
+    """.format(
+        kprobe=probe
+    )
+    logging.debug(prog)
+    return prog
+
+
+def _logger_conf(args: argparse.Namespace) -> None:
+    """Setup the logging environment."""
+    log = logging.getLogger()
+    log.setLevel(logging.INFO)
+    format_str = "%(asctime)s - %(levelname)-8s - %(message)s"
+    date_format = "%Y-%m-%d %H:%M:%S"
+    formatter = logging.Formatter(format_str, date_format)
+    if os.isatty(2):
+        cformat = "%(log_color)s" + format_str
+        colors = {
+            "DEBUG": "cyan",
+            "INFO": "white",
+            "WARNING": "yellow",
+            "ERROR": "red",
+            "CRITICAL": "red",
+        }
+        if HAVE_COLORLOG:
+            formatter = colorlog.ColoredFormatter(
+                cformat, date_format, log_colors=colors
+            )
+        else:
+            formatter = logging.Formatter(format_str, date_format)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    log.addHandler(stream_handler)
+    log.setLevel(logging.INFO)
+    _logger_level(args)
+    return
+
+
+def _logger_level(args: argparse.Namespace) -> None:
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+    return
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Large Block Size Analysis tool",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "-d",
+        "--debug",
+        help="enable debug output",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--dev",
+        type=str,
+        help="NVMe device",
+        default="/dev/nvme0n1",
+    )
+    parser.add_argument(
+        "--info",
+        help="Print system and device info",
+        action="store_true",
+    )
+    parser.add_argument(
+        "-v",
+        "--version",
+        help="%(prog)s version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+    subparser = parser.add_subparsers(help="sub command help", dest="cmd")
+    blk = subparser.add_parser("blk-mq", help="'struct request' (blk-mq) tracer")
+    blk.add_argument(
+        "probes", choices=["kprobe__blk_execute_rq_nowait", "kprobe__nvme_setup_cmd"]
+    )
+    nvme_cmd = subparser.add_parser(
+        "nvme-cmd-len",
+        help="'NVMe command length tracer",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    nvme_cmd.add_argument(
+        "--filter",
+        type=int,
+        help="request operation filter. Check enum req_op in blk_types.h",
+        default=1,
+    )
+    nvme_cmd.add_argument(
+        "--blocksize",
+        type=int,
+        help="block size (in bytes) to check for aligment (power of 2).",
+        default=16384,
+    )
+    nvme_cmd.add_argument(
+        "--dtracing",
+        help="enable debug tracing when running bpftrace.",
+        action="store_true",
+    )
+    return parser
+
+
+def _popen(
+    cmd: list[str], environ: dict[str, str] = {}, comm: bool = True
+) -> subprocess.Popen[bytes]:
+    try:
+        logging.debug(f"{' '.join(cmd)}")
+        p = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environ
+        )
+        if comm:
+            stdout, stderr = p.communicate()
+            if stdout:
+                logging.debug(stdout.decode("utf-8"))
+            if stderr:
+                logging.debug(stderr.decode("utf-8"))
+            logging.debug(f"Return code: {p.returncode}")
+        return p
+    except subprocess.CalledProcessError as exc:
+        sys.exit(exc.returncode)
+
+
+def update_data(prev, new):
+    """Print bio event data."""
+    for p in prev.items():
+        _key = p[0]
+        _old = p[1]
+        _new = new[_key]
+        if _old != _new:
+            prev[_key] = _new
+            logging.info(f"{_key}: {_old} -> {_new}")
+
+
+def update_data_nvme(prev, new):
+    """Print NVMe event data."""
+    for p in prev.items():
+        _key = p[0]
+        _old = p[1]
+        _new = new[_key]
+        if _old != _new:
+            prev[_key] = _new
+            logging.warning("NVMe event!!!")
+            logging.info(f"{_key}: {_old} -> {_new}")
+
+
+data_d = {
+    "nr_phys_segments": 0,
+    "__data_len": 0,
+    "bio_max_vecs": 0,
+    "bi_size": 0,
+    "bi_vcnt": 0,
+}
+
+
+def print_bio_event(cpu, bio_data, size):
+    """Print bio events."""
+    global data_d
+    bio_event = b["blk_mq_events"].event(bio_data)
+
+    comm = bio_event.comm.decode("utf8")
+    if comm != "fio":
+        return
+
+    data_current_d = {
+        "nr_phys_segments": bio_event.nr_phys_segments,
+        "__data_len": bio_event.__data_len,
+        "bio_max_vecs": bio_event.bio_max_vecs,
+        "bi_size": bio_event.bi_size,
+        "bi_vcnt": bio_event.bi_vcnt,
+    }
+    update_data(data_d, data_current_d)
+
+
+nvme_data_d = {
+    "nr_allocations": 99,
+}
+
+
+def print_nvme_event(cpu, nvme_data, size):
+    """Print NVMe events (debug)."""
+    nvme_event = b["nvme_events"].event(nvme_data)
+
+    comm = nvme_event.comm.decode("utf8")
+    if comm != "fio":
+        return
+
+    nvme_data_current_d = {
+        "nr_allocations": nvme_event.nr_allocations,
+    }
+    update_data_nvme(nvme_data_d, nvme_data_current_d)
+
+
+def nvme_cmd_len(args: argparse.Namespace) -> None:
+    """nvme_setup_cmd tracer.
+
+    Functions:
+        - nvme_setup_cmd
+    """
+    req_op = {0: "REQ_OP_READ", 1: "REQ_OP_WRITE"}
+
+    rop = "Unknown"
+    if args.filter in req_op:
+        rop = req_op[args.filter]
+
+    logging.debug(f"Tracing length of '{rop}' commands for {args.dev}")
+    nvme = args.dev.replace("/dev/", "")
+    try:
+        cmd = [
+            f"{os.getcwd()}/scripts/check_nvme_block_len.bt",
+            f"{nvme}",
+            str(args.filter),
+            str(args.blocksize),
+            str(int(args.dtracing)),
+        ]
+        subprocess.call(cmd)
+    except KeyboardInterrupt:
+        return
+    return
+
+
+def blk_mq_trace(args: argparse.Namespace) -> None:
+    """blk-mq tracer.
+
+    Functions:
+        - kprobe__blk_execute_rq_nowait
+        - kprobe__nvme_setup_cmd
+    """
+    global b
+    prog = blk_mq_prog(args)
+    logging.info("Loading blk-mq. Please, wait to launch the test...")
+    test_ex = "fio -iodepth=1 -rw=read -ioengine=io_uring_cmd -bs=64k -numjobs=1 -size=1G -filename=/dev/ng0n1 -name=io_uring_1 -loop=4"
+    logging.info(f"Execute the following test in other terminal:\n{test_ex}")
+    b = BPF(text=prog)
+    logging.info("Tracing enabled. Press 'Ctrl+C' to cancel.")
+    b["blk_mq_events"].open_perf_buffer(print_bio_event)
+    # b["nvme_events"].open_perf_buffer(print_nvme_event)
+    try:
+        while 1:
+            b.perf_buffer_poll()
+            sleep(0.1)
+    except KeyboardInterrupt:
+        print()
+
+    bv_len = b["bv_len"]
+    logging.info("log2 'bv_len' histogram")
+    bv_len.print_log2_hist("bv_len")
+    bv_len_last = b["bv_len_last"]
+
+    logging.info("Last 'bv_len'")
+    for k, v in sorted(bv_len_last.items(), key=lambda bv_len: bv_len[1].value):
+        logging.info(f"key: {k.value}, value: {v.value}")
+
+    logging.debug("blk-mq completed")
+
+
+def __print_table(_table) -> None:
+    for r in range(0, len(_table[0])):
+        logging.info(f"| {_table[0][r]:>22} | {_table[1][r]:>20} |")
+
+
+def __print_block_layer_info(device: str, sysfs: list[str]) -> None:
+    nvme = device.replace("/dev/", "")
+    _table = [[], []]
+    for s in sysfs:
+        with open(f"/sys/class/block/{nvme}/queue/{s}") as f:
+            val = f.read().replace("\n", "")
+            _table[0].append(s)
+            _table[1].append(val)
+    __print_table(_table)
+
+
+def _print_block_layer_info(device: str, debug: bool) -> None:
+    logging.info("| {:>} {:>21} |".format("Block layer information", device))
+    sysfs = [
+        "hw_sector_size",
+        "logical_block_size",
+        "max_hw_sectors_kb",
+        "max_sectors_kb",
+        "max_segments",
+        "minimum_io_size",
+        "optimal_io_size",
+        "physical_block_size",
+    ]
+    if debug:
+        sysfs.extend(
+            [
+                "max_discard_segments",
+                "max_integrity_segments",
+                "max_segment_size",
+                "nomerges",
+                "nr_requests",
+                "scheduler",
+            ]
+        )
+    __print_block_layer_info(device, sysfs)
+
+
+def _get_json_value(data, param):
+    if param in data:
+        return data[param]
+    return "-"
+
+
+def _get_json_lbaf(data, param):
+    if param in data:
+        return data[param]
+    return []
+
+
+def _print_nvmecli_info(device: str, debug: bool) -> None:
+    logging.info("| {:>} {:>20} |".format("Block device information", device))
+    nvme = device.replace("/dev/", "")
+
+    idctrl = _popen(
+        [
+            "/usr/sbin/nvme",
+            "id-ctrl",
+            f"/dev/{nvme}",
+            "--output-format=json",
+        ]
+    )
+    idctrl = idctrl.communicate()[0].decode("utf-8")
+    idctrl = json.loads(idctrl)
+
+    idns = _popen(
+        [
+            "/usr/sbin/nvme",
+            "id-ns",
+            f"/dev/{nvme}",
+            "--output-format=json",
+        ]
+    )
+    idns = idns.communicate()[0].decode("utf-8")
+    idns = json.loads(idns)
+
+    mdts = _get_json_value(idctrl, "mdts")
+    sn = _get_json_value(idctrl, "sn").strip()
+    mn = _get_json_value(idctrl, "mn").strip()
+
+    lbaf = _get_json_lbaf(idns, "lbafs")
+    lba_list = ""
+    if lbaf:
+        lba_list = list({lba["ds"] for lba in lbaf})
+        lba_list = ", ".join(str(v) for v in lba_list)
+
+    nlbaf = _get_json_value(idns, "nlbaf")
+    nawun = _get_json_value(idns, "nawun")
+    nawupf = _get_json_value(idns, "nawupf")
+    npwg = _get_json_value(idns, "npwg")
+    nows = _get_json_value(idns, "nows")
+
+    _table = [
+        ["mdts", "nlbaf", "nawun", "nawupf", "npwg", "nows", "lbaf(ds)"],
+        [mdts, nlbaf, nawun, nawupf, npwg, nows, lba_list],
+    ]
+
+    if debug:
+        _table[0].extend(["sn", "mn"])
+        _table[1].extend([sn, mn])
+
+    __print_table(_table)
+
+
+def _print_system_info(debug: bool):
+    with open("/etc/hostname") as f:
+        hostname = f.read().replace("\n", "")
+    aux = _popen(["/usr/bin/getconf", "PAGE_SIZE"], comm=True)
+
+    logging.info("| {:>45} |".format("System information"))
+
+    page_size = aux.communicate()[0].decode("utf-8").replace("\n", "")
+
+    _table = [["PAGE_SIZE"], [page_size]]
+    if debug:
+        _table[0].extend(["hostname"])
+        _table[1].extend([hostname])
+    __print_table(_table)
+
+
+def print_system_info(args: argparse.Namespace) -> None:
+    """Print system information and device information from nvme-cli and sysf."""
+    _print_system_info(args.debug)
+
+    for d in [args.dev]:
+        _print_block_layer_info(d, args.debug)
+        _print_nvmecli_info(d, args.debug)
+
+
+def main() -> None:
+    """The tool."""
+    p = _parser()
+    args, _ = p.parse_known_args()
+
+    _logger_conf(args)
+
+    logging.info("Large Block Size Analysis tool")
+
+    # System & dev info
+    if args.info:
+        print_system_info(args)
+
+    if not args.cmd:
+        p.print_usage()
+        return
+
+    disp = {"blk-mq": blk_mq_trace, "nvme-cmd-len": nvme_cmd_len}
+
+    disp[args.cmd](args)
+
+
+if __name__ == "__main__":
+    ret = 0
+    try:
+        main()
+    except Exception:
+        ret = 1
+        import traceback
+
+        traceback.print_exc()
+    sys.exit(ret)
