@@ -274,6 +274,10 @@ class SmokeTests(TestCase):
         else:
             self.skipTest("skipped 'nfs module not loaded'")
 
+    @skipUnless(kernel_version_ge(4,19), "requires kernel >= 4.19")
+    def test_blkalgn(self):
+        self.run_with_duration("blkalgn.py")
+
     @skipUnless(kernel_version_ge(4,6), "requires kernel >= 4.6")
     @mayFail("This fails on github actions environment, and needs to be fixed")
     def test_offcputime(self):
