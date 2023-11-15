@@ -43,7 +43,25 @@ bpf_text = """
 #include <uapi/linux/ptrace.h>
 #include <linux/blk-mq.h>
 #include <linux/blk_types.h>
-#include "nvme.h"
+#include <linux/nvme.h>
+
+struct nvme_ns {
+    struct list_head list;
+
+    struct nvme_ctrl *ctrl;
+    struct request_queue *queue;
+    struct gendisk *disk;
+#ifdef CONFIG_NVME_MULTIPATH
+    enum nvme_ana_state ana_state;
+    u32 ana_grpid;
+#endif
+    struct list_head siblings;
+    struct kref kref;
+    struct nvme_ns_head *head;
+
+    int lba_shift;
+    // [...]
+};
 
 struct data_t {
     u32 pid;
