@@ -16,6 +16,7 @@ import logging
 import os
 import time
 import sqlite3
+import math
 
 examples = """examples:
   blkalgn                             # Observe all blk commands
@@ -452,8 +453,8 @@ bpf = BPF(text=bpf_text)
 if args.trace:
     print("Tracing block commands... Hit Ctrl-C to end.")
     print(
-        "%-10s %-8s %-8s %-10s %-10s %-16s %-8s"
-        % ("DISK", "OPS", "LEN", "LBA", "PID", "COMM", "ALGN")
+        "%-10s %-8s %-8s %-10s %-10s %-16s %-8s %-8s %-8s"
+        % ("DISK", "OPS", "LEN", "LBA", "PID", "COMM", "ALGN", "IOWAF", "WWAF")
     )
 
 if BPF.get_kprobe_functions(b"blk_mq_start_request"):
@@ -461,19 +462,36 @@ if BPF.get_kprobe_functions(b"blk_mq_start_request"):
 
 
 events_data_acc = []
+waf_data = {"num": 0, "den": 0}
+
+
+def disk_info():
+    device_data = {"npwg": 3}
+    with open(f"/sys/block/{args.disk}/queue/logical_block_size") as f:
+        lbs = int(f.readline().replace("\n", ""))
+        device_data.update({"lbs": lbs})
+    iu = (device_data["npwg"] + 1) * device_data["lbs"]
+    device_data.update({"iu": iu})
+
+
+if args.disk:
+    disk_info()
 
 
 def capture_event(ctx, data, size):
     event = bpf["events"].event(data)
+    waf = (0, 0)
+    if args.disk:
+        waf = waf_measure(event)
     if args.trace:
-        print_event(event)
+        print_event(event, waf)
     if args.output:
         acc_event(event)
 
 
-def print_event(event):
+def print_event(event, waf):
     print(
-        "%-10s %-8s %-8s %-10s %-10s %-16s %-8s"
+        "%-10s %-8s %-8s %-10s %-10s %-16s %-8s %-8s %-8s"
         % (
             event.disk.decode("utf-8", "replace"),
             blk_ops[event.op],
@@ -482,8 +500,33 @@ def print_event(event):
             event.pid,
             event.comm.decode("utf-8", "replace"),
             event.algn,
+            waf[0],  # io (event) waf
+            waf[1],  # workload waf
         ),
     )
+
+
+def waf_measure(event):
+    """
+    IU WAF formula:
+
+    WAF = (ceil((off_adj + len) / IU) * IU)/len
+    """
+    # Adjust offset to IU boundaries
+    off = event.lba * device_data["lbs"]
+    off -= int(off/device_data["iu"]) * device_data["iu"]
+
+    # Total IO
+    iot = math.ceil((off + event.len)/device_data["iu"])
+    iot *= device_data["iu"]
+
+    # IU WAF per IO
+    iowaf = format(iot/event.len, '.2f')
+
+    waf_data["num"] += iot
+    waf_data["den"] += event.len
+    wwaf = format(waf_data["num"]/waf_data["den"], '.2f')
+    return (iowaf, wwaf)
 
 
 def acc_event(event):
