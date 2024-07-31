@@ -16,6 +16,7 @@ import logging
 import os
 import time
 import sqlite3
+import signal
 
 examples = """examples:
   blkalgn                             # Observe all blk commands
@@ -554,26 +555,48 @@ def db_commit_event(events_data):
     events_data_acc.clear()
 
 
-bpf["events"].open_ring_buffer(capture_event)
-block_len = bpf["block_len"]
-algn = bpf["algn"]
-while 1:
-    try:
-        bpf.ring_buffer_poll(30)
-        db_commit_event(events_data_acc)
-        if args.interval:
-            time.sleep(abs(args.interval))
-    except KeyboardInterrupt:
-        bpf.ring_buffer_consume()
+class BlkAlgnProcess:
+    def __init__(self):
+        signal.signal(signal.SIGTERM, self.handle_signal)
+        signal.signal(signal.SIGINT, self.handle_signal)
+        self.run = True
+        self.bpf = bpf
+        self.bpf["events"].open_ring_buffer(capture_event)
+        self.block_len = bpf["block_len"]
+        self.algn = bpf["algn"]
+
+    def handle_signal(self, signum, frame):
+        self.run = False
+
+    def clear(self):
+        self.bpf.ring_buffer_consume()
         db_commit_event(events_data_acc)
         print()
-        block_len.print_log2_hist(
+        self.block_len.print_log2_hist(
             "Block size", "operation", section_print_fn=bytes.decode
         )
-        block_len.clear()
+        self.block_len.clear()
         print()
-        algn.print_log2_hist("Algn size", "operation",
-                             section_print_fn=bytes.decode)
-        algn.clear()
-        break
+        self.algn.print_log2_hist(
+            "Algn size", "operation", section_print_fn=bytes.decode
+        )
+        self.algn.clear()
+
+    def daemon(self):
+        while self.run:
+            try:
+                bpf.ring_buffer_poll(30)
+                db_commit_event(events_data_acc)
+                if args.interval:
+                    time.sleep(abs(args.interval))
+            except KeyboardInterrupt:
+                self.clear()
+                break
+        self.clear()
+
+
+if __name__ == "__main__":
+    blkalgnp = BlkAlgnProcess()
+    blkalgnp.daemon()
+
 exit()
