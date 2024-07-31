@@ -27,7 +27,7 @@ examples = """examples:
   blkalgn --debug                     # Print eBPF program before observe
   blkalgn --trace                     # Print NVMe captured events
   blkalgn --interval 0.1              # Poll data ring buffer every 100 ms
-  blkalgn --output blkalgn.db         # Capture blk commands in sqlite database
+  blkalgn --capture blkalgn.db        # Capture blk commands in sqlite database
   blkalgn parser
     --file blkalgn.db
     --select "*"                      # Query NVMe commands in captured db file
@@ -75,9 +75,9 @@ parser.add_argument(
     help="polling interval"
 )
 parser.add_argument(
-    "--output",
+    "--capture",
     type=str,
-    help="database output file (.db)"
+    help="Capture blk commands into a database output file (.db)"
 )
 parser.add_argument(
     "--force",
@@ -310,13 +310,13 @@ if args.cmd and "parser" in args.cmd:
     exit()
 
 # database setup to capture events
-if args.output:
-    if os.path.exists(args.output) and not args.force:
-        print(f"File {args.output} exist. Use '--force' to overwrite.")
+if args.capture:
+    if os.path.exists(args.capture) and not args.force:
+        print(f"File {args.capture} exist. Use '--force' to overwrite.")
         exit()
-    if os.path.exists(args.output) and args.force:
-        os.remove(args.output)
-    conn = sqlite3.connect(f"{args.output}")
+    if os.path.exists(args.capture) and args.force:
+        os.remove(args.capture)
+    conn = sqlite3.connect(f"{args.capture}")
     cursor = conn.cursor()
 
     cursor.execute(
@@ -502,7 +502,7 @@ def capture_event(ctx, data, size):
     event = bpf["events"].event(data)
     if args.trace:
         print_event(event)
-    if args.output:
+    if args.capture:
         acc_event(event)
 
 
@@ -541,7 +541,7 @@ def acc_event(event):
 def db_commit_event(events_data):
     if not len(events_data_acc):
         return
-    conn = sqlite3.connect(f"{args.output}")
+    conn = sqlite3.connect(f"{args.capture}")
     cursor = conn.cursor()
     cursor.executemany(
         """
