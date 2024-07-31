@@ -167,7 +167,7 @@ logger = logging.getLogger(__name__)
 if args.output:
     logging.basicConfig(filename=args.output, level=level, format='')
 else:
-    logging.basicConfig(level=level)
+    logging.basicConfig(level=level, format='')
 
 
 def print_log2_histogram_tuples(data):
