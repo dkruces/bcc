@@ -434,7 +434,8 @@ blk_ops = {
 }
 if args.ops:
     try:
-        operation = blk_ops[args.ops]
+        ops = args.ops.lower().capitalize()
+        operation = blk_ops[ops]
     except KeyError:
         print("Operation does not exist. Please, introduce any valid operation")
         for k in blk_ops.keys():
