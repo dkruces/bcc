@@ -17,6 +17,7 @@ import os
 import time
 import sqlite3
 import signal
+import sys
 
 examples = """examples:
   blkalgn                             # Observe all blk commands
@@ -28,6 +29,7 @@ examples = """examples:
   blkalgn --trace                     # Print NVMe captured events
   blkalgn --interval 0.1              # Poll data ring buffer every 100 ms
   blkalgn --capture blkalgn.db        # Capture blk commands in sqlite database
+  blkalgn --output blkalgn.log        # Redirect stdout to a file
   blkalgn parser
     --file blkalgn.db
     --select "*"                      # Query NVMe commands in captured db file
@@ -78,6 +80,11 @@ parser.add_argument(
     "--capture",
     type=str,
     help="Capture blk commands into a database output file (.db)"
+)
+parser.add_argument(
+    "--output",
+    type=str,
+    help="Redirect stdout to a file."
 )
 parser.add_argument(
     "--force",
@@ -153,10 +160,14 @@ dbparser.add_argument(
 args = parser.parse_args()
 
 level = logging.INFO
-if args.debug:
+if args.debug or args.trace:
     level = logging.DEBUG
 
-logging.basicConfig(level=level)
+logger = logging.getLogger(__name__)
+if args.output:
+    logging.basicConfig(filename=args.output, level=level, format='')
+else:
+    logging.basicConfig(level=level)
 
 
 def print_log2_histogram_tuples(data):
@@ -186,8 +197,8 @@ def open_and_validate_db_file():
     table_names = cursor.fetchall()
 
     if not table_names or ("events",) not in table_names:
-        logging.error("Table name 'events' not found")
-        logging.error(f"table_names: {table_names}")
+        logger.error("Table name 'events' not found")
+        logger.error(f"table_names: {table_names}")
         conn.close()
         exit()
 
@@ -202,9 +213,9 @@ def open_and_validate_db_file():
     ]
     table_columns = [column[1] for column in table_info]
     if expected_columns != table_columns:
-        logging.error("'events' table structure mismatch")
-        logging.error(f"expected: {expected_columns}")
-        logging.error(f"found: {table_columns}")
+        logger.error("'events' table structure mismatch")
+        logger.error(f"expected: {expected_columns}")
+        logger.error(f"found: {table_columns}")
         conn.close()
         exit()
 
@@ -273,7 +284,7 @@ if args.cmd and "parser" in args.cmd:
         select = select.replace("FROM events", ", COUNT(*) FROM events")
         count = True
 
-    logging.debug(f"{select}, {where_vars}")
+    logger.debug(f"{select}, {where_vars}")
     cursor.execute(select, where_vars)
     events = cursor.fetchall()
 
@@ -334,7 +345,7 @@ if args.capture:
     """
     )
     conn.close()
-    logging.debug("Capturing commands into database...")
+    logger.debug("Capturing commands into database...")
 
 
 # define BPF program
@@ -485,8 +496,8 @@ if args.debug:
 
 bpf = BPF(text=bpf_text)
 if args.trace:
-    print("Tracing block commands... Hit Ctrl-C to end.")
-    print(
+    logger.debug("Tracing block commands... Hit Ctrl-C to end.")
+    logger.debug(
         "%-10s %-8s %-8s %-10s %-10s %-16s %-8s"
         % ("DISK", "OPS", "LEN", "LBA", "PID", "COMM", "ALGN")
     )
@@ -511,7 +522,7 @@ def print_event(event):
         op = blk_ops[event.op]
     except KeyError:
         op = event.op
-    print(
+    logger.debug(
         "%-10s %-8s %-8s %-10s %-10s %-16s %-8s"
         % (
             event.disk.decode("utf-8", "replace"),
@@ -568,7 +579,7 @@ class BlkAlgnProcess:
     def handle_signal(self, signum, frame):
         self.run = False
 
-    def clear(self):
+    def _clear(self):
         self.bpf.ring_buffer_consume()
         db_commit_event(events_data_acc)
         print()
@@ -581,6 +592,18 @@ class BlkAlgnProcess:
             "Algn size", "operation", section_print_fn=bytes.decode
         )
         self.algn.clear()
+
+    def clear(self):
+        # Redirect stdout to a file
+        # Needed for print_log2_hist() file redirection
+        if args.output:
+            original_stdout = sys.stdout
+            with open(args.output, "a") as ofile:
+                sys.stdout = ofile
+                self._clear()
+            sys.stdout = original_stdout
+        else:
+            self._clear()
 
     def daemon(self):
         while self.run:
