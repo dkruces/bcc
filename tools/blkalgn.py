@@ -18,6 +18,7 @@ import time
 import sqlite3
 import signal
 import sys
+import json
 
 examples = """examples:
   blkalgn                             # Observe all blk commands
@@ -30,6 +31,7 @@ examples = """examples:
   blkalgn --interval 0.1              # Poll data ring buffer every 100 ms
   blkalgn --capture blkalgn.db        # Capture blk commands in sqlite database
   blkalgn --output blkalgn.log        # Redirect stdout to a file
+  blkalgn --json-output blkalgn.json  # JSON output with a summary
   blkalgn parser
     --file blkalgn.db
     --select "*"                      # Query NVMe commands in captured db file
@@ -85,6 +87,11 @@ parser.add_argument(
     "--output",
     type=str,
     help="Redirect stdout to a file."
+)
+parser.add_argument(
+    "--json-output",
+    type=str,
+    help="Write summary output to JSON file"
 )
 parser.add_argument(
     "--force",
@@ -571,6 +578,10 @@ class BlkAlgnProcess:
     def __init__(self):
         signal.signal(signal.SIGTERM, self.handle_signal)
         signal.signal(signal.SIGINT, self.handle_signal)
+        self.json_output_data = {
+            "Block size": {},
+             "Algn size": {}
+        }
         self.run = True
         self.bpf = bpf
         self.bpf["events"].open_ring_buffer(capture_event)
@@ -587,11 +598,17 @@ class BlkAlgnProcess:
         self.block_len.print_log2_hist(
             "Block size", "operation", section_print_fn=bytes.decode
         )
+        for k, v in self.block_len.items():
+            print(f"Block size: {k.value - 1} - {v.value}")
+            self.json_output_data["Block size"][k.value - 1] = v.value
         self.block_len.clear()
         print()
         self.algn.print_log2_hist(
             "Algn size", "operation", section_print_fn=bytes.decode
         )
+        for k, v in self.algn.items():
+            print(f"Algn size: {k.value - 1} - {v.value}")
+            self.json_output_data["Algn size"][k.value - 1] = v.value
         self.algn.clear()
 
     def clear(self):
@@ -605,6 +622,9 @@ class BlkAlgnProcess:
             sys.stdout = original_stdout
         else:
             self._clear()
+        if args.json_output:
+            with open(args.json_output, "w") as f:
+                json.dump(self.json_output_data, f, indent=4)
 
     def daemon(self):
         while self.run:
