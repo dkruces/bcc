@@ -167,7 +167,7 @@ dbparser.add_argument(
 args = parser.parse_args()
 
 level = logging.INFO
-if args.debug or args.trace:
+if args.debug:
     level = logging.DEBUG
 
 logger = logging.getLogger(__name__)
@@ -504,8 +504,8 @@ if args.debug:
 
 bpf = BPF(text=bpf_text)
 if args.trace:
-    logger.debug("Tracing block commands... Hit Ctrl-C to end.")
-    logger.debug(
+    logger.info("Tracing block commands... Hit Ctrl-C to end.")
+    logger.info(
         "%-10s %-8s %-8s %-10s %-10s %-16s %-8s"
         % ("DISK", "OPS", "LEN", "LBA", "PID", "COMM", "ALGN")
     )
@@ -530,7 +530,7 @@ def print_event(event):
         op = blk_ops[event.op]
     except KeyError:
         op = event.op
-    logger.debug(
+    logger.info(
         "%-10s %-8s %-8s %-10s %-10s %-16s %-8s"
         % (
             event.disk.decode("utf-8", "replace"),
