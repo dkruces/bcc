@@ -436,6 +436,15 @@ blk_ops = {
     "Last": 36,
 }
 
+def get_device_data(disk):
+    """Collect NVMe disk data from sysfs:
+    - lbs (Logical Block Size).
+    """
+    lbs = 4096
+    with open(f"/sys/block/{disk}/queue/logical_block_size") as f:
+        lbs = int(f.readline().replace("\n", ""))
+    return lbs
+
 workload_waf = {}
 if args.ops:
     try:
@@ -586,8 +595,8 @@ def waf_measure(event):
 
     if disk not in workload_waf.keys():
         _disk_iu_winfo = {}
-        lbs = 4096
-        while lbs <= 4 * 1024:  # to extend this for lbs >= 4k
+        max_lbs = lbs = get_device_data(disk)
+        while lbs <= max_lbs:
             _iu_winfo = {}
             _iu = 4096
             _winfo = {}
