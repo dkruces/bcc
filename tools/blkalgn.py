@@ -435,6 +435,8 @@ blk_ops = {
     "DrvOut": 35,
     "Last": 36,
 }
+
+workload_waf = {}
 if args.ops:
     try:
         ops = args.ops.lower().capitalize()
@@ -515,6 +517,7 @@ events_data_acc = []
 
 def capture_event(ctx, data, size):
     event = bpf["events"].event(data)
+    waf_measure(event)
     if args.trace:
         print_event(event)
     if args.capture:
@@ -551,6 +554,78 @@ def acc_event(event):
         event.algn,
     )
     events_data_acc.append(event_data)
+
+
+def waf_measure(event):
+    """
+    IU WAF formula:
+
+    WAF = (ceil((off_adj + len) / IU) * IU)/len
+
+    Also:
+    - lbs (Logical Block Size).
+    - iu (Indirection Unit) from the minimum_io_size.
+    - waf (Write Amplification Factor):
+        - IO_iu: Input/Output in bytes, multiple of iu.
+        - IO_host: Input/Output in bytes sent from the host.
+    """
+    try:
+        op = blk_ops[event.op]
+    except KeyError:
+        op = event.op
+
+    if op != "Write":
+        return
+
+    disk = event.disk.decode("utf-8", "replace")
+
+    # skip if --disk is passed and disk event does not match
+    if args.disk and args.disk != disk:
+        return
+
+    if disk not in workload_waf.keys():
+        _disk_iu_winfo = {}
+        lbs = 4096
+        while lbs <= 4 * 1024:  # to extend this for lbs >= 4k
+            _iu_winfo = {}
+            _iu = 4096
+            _winfo = {}
+            while _iu <= 2048 * 1024:
+                _winfo = {"wwaf": 0, "iocnt": 0, "iohost": 0, "ioiu": 0}
+                _iu_winfo[_iu] = _winfo
+                _iu *= 2
+
+            _disk_iu_winfo[lbs] = _iu_winfo
+            lbs *= 2
+
+        # Update the workload_waf dictionary with the new disk information
+        workload_waf[disk] = _disk_iu_winfo
+
+    # Adjust offset to IU boundaries
+    for lbs in workload_waf[disk].keys():
+        for iu in workload_waf[disk][lbs].keys():
+            workload_waf[disk][lbs][iu]["iocnt"] += 1
+            off = event.lba * lbs
+            off -= int(off / iu) * iu
+            # Total IO
+            iot = math.ceil((off + event.len) / iu)
+            iot *= iu
+
+            # IU WAF per IO
+            iowaf = format(iot / event.len, ".2f")
+            workload_waf[disk][lbs][iu]["ioiu"] += iot
+            workload_waf[disk][lbs][iu]["iohost"] += event.len
+            workload_waf[disk][lbs][iu]["wwaf"] = format(
+                workload_waf[disk][lbs][iu]["ioiu"]
+                / workload_waf[disk][lbs][iu]["iohost"],
+                ".2f",
+            )
+            logging.debug(f"* lbs: {lbs//1024}k, iu: {iu//1024}k")
+            logging.debug(
+                f"   iowaf: {iowaf}; iot: {iot}; off: {off}; lba: {event.lba}; len: {event.len}"
+            )
+            logging.debug("    {}".format(pprint.pformat(workload_waf[disk][lbs][iu])))
+    return
 
 
 def db_commit_event(events_data):
@@ -603,6 +678,22 @@ class BlkAlgnProcess:
             print(f"Algn size: {k.value - 1} - {v.value}")
             self.json_output_data["Algn size"][k.value - 1] = v.value
         self.algn.clear()
+        logging.info("Workload WAF:")
+        all_lbs = sorted(next(iter(workload_waf.values())).keys())
+        # Print the header row
+        header = ["DISK", "IU"] + [f"WWAF (LBS: {lbs//1024}k)" for lbs in all_lbs]
+        logging.info(" ".join(f"{col:<15}" for col in header))
+        # Print the rows
+        for disk in workload_waf:
+            for iu in workload_waf[disk][
+                all_lbs[0]
+            ]:  # Iterate over IU based on the first LBS entry
+                row = [disk, iu]
+                for lbs in all_lbs:
+                    wwaf = workload_waf[disk][lbs][iu]["wwaf"]
+                    row.append(wwaf)
+                logging.info(" ".join(f"{str(col):<15}" for col in row))
+        logging.debug("{}".format(pprint.pformat(workload_waf)))
 
     def clear(self):
         # Redirect stdout to a file
