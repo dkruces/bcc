@@ -688,22 +688,23 @@ class BlkAlgnProcess:
             print(f"Algn size: {k.value - 1} - {v.value}")
             self.json_output_data["Algn size"][k.value - 1] = v.value
         self.algn.clear()
-        logging.info("Workload WAF:")
-        all_lbs = sorted(next(iter(workload_waf.values())).keys())
-        # Print the header row
-        header = ["DISK", "IU"] + [f"WWAF (LBS: {lbs//1024}k)" for lbs in all_lbs]
-        logging.info(" ".join(f"{col:<15}" for col in header))
-        # Print the rows
-        for disk in workload_waf:
-            for iu in workload_waf[disk][
-                all_lbs[0]
-            ]:  # Iterate over IU based on the first LBS entry
-                row = [disk, iu]
-                for lbs in all_lbs:
-                    wwaf = workload_waf[disk][lbs][iu]["wwaf"]
-                    row.append(wwaf)
-                logging.info(" ".join(f"{str(col):<15}" for col in row))
-        logging.debug("{}".format(pprint.pformat(workload_waf)))
+        if workload_waf:
+            logging.info("Workload WAF:")
+            all_lbs = sorted(next(iter(workload_waf.values())).keys())
+            # Print the header row
+            header = ["DISK", "IU"] + [f"WWAF (LBS: {lbs//1024}k)" for lbs in all_lbs]
+            logging.info(" ".join(f"{col:<15}" for col in header))
+            # Print the rows
+            for disk in workload_waf:
+                for iu in workload_waf[disk][
+                    all_lbs[0]
+                ]:  # Iterate over IU based on the first LBS entry
+                    row = [disk, iu]
+                    for lbs in all_lbs:
+                        wwaf = workload_waf[disk][lbs][iu]["wwaf"]
+                        row.append(wwaf)
+                    logging.info(" ".join(f"{str(col):<15}" for col in row))
+            logging.debug("{}".format(pprint.pformat(workload_waf)))
 
     def clear(self):
         # Redirect stdout to a file
