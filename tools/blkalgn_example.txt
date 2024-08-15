@@ -214,3 +214,100 @@ nvme0n1    Write    4096     5822235    1406       postgres         4096
      65536 -> 131071     : 49       |                                        |
     131072 -> 262143     : 33       |                                        |
     262144 -> 524287     : 10       |                                        |
+
+4. Testing Workload Write-Amplification-Factor
+
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=4k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=8k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=16k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=0
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=4k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=4k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=8k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=0
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=0
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=0
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=4k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=16k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=4k
+fio -bs=8k   -iodepth=1 -rw=write -ioengine=sync -size=8k   -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=20k  -iodepth=1 -rw=write -ioengine=sync -size=20k  -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=12k  -iodepth=1 -rw=write -ioengine=sync -size=12k  -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=4k
+fio -bs=12k  -iodepth=1 -rw=write -ioengine=sync -size=12k  -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=8k
+fio -bs=512k -iodepth=1 -rw=write -ioengine=sync -size=512k -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=8k
+fio -bs=40k  -iodepth=1 -rw=write -ioengine=sync -size=40k  -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=8k
+fio -bs=32k  -iodepth=1 -rw=write -ioengine=sync -size=32k  -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=24k
+fio -bs=256k -iodepth=1 -rw=write -ioengine=sync -size=256k -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=12k
+fio -bs=24k  -iodepth=1 -rw=write -ioengine=sync -size=24k  -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=32k
+fio -bs=32k  -iodepth=1 -rw=write -ioengine=sync -size=32k  -name=sync -direct=1 -filename=/dev/nvme0n1 --offset=8
+
+Results:
+Workload WAF:
+DISK            IU              WWAF (LBS: 4k)
+nvme0n1         4096            1.00
+nvme0n1         8192            1.16
+nvme0n1         16384           1.52
+nvme0n1         32768           1.77
+nvme0n1         65536           2.73
+nvme0n1         131072          4.81
+nvme0n1         262144          8.96
+nvme0n1         524288          17.04
+nvme0n1         1048576         33.20
+nvme0n1         2097152         66.40
+
+Debug output:
+{'nvme0n1': {4096: {4096: {'iocnt': 38,
+                           'iohost': 1200128,
+                           'ioiu': 1200128,
+                           'wwaf': '1.00'},
+                    8192: {'iocnt': 38,
+                           'iohost': 1200128,
+                           'ioiu': 1392640,
+                           'wwaf': '1.16'},
+                    16384: {'iocnt': 38,
+                            'iohost': 1200128,
+                            'ioiu': 1818624,
+                            'wwaf': '1.52'},
+                    32768: {'iocnt': 38,
+                            'iohost': 1200128,
+                            'ioiu': 2129920,
+                            'wwaf': '1.77'},
+                    65536: {'iocnt': 38,
+                            'iohost': 1200128,
+                            'ioiu': 3276800,
+                            'wwaf': '2.73'},
+                    131072: {'iocnt': 38,
+                             'iohost': 1200128,
+                             'ioiu': 5767168,
+                             'wwaf': '4.81'},
+                    262144: {'iocnt': 38,
+                             'iohost': 1200128,
+                             'ioiu': 10747904,
+                             'wwaf': '8.96'},
+                    524288: {'iocnt': 38,
+                             'iohost': 1200128,
+                             'ioiu': 20447232,
+                             'wwaf': '17.04'},
+                    1048576: {'iocnt': 38,
+                              'iohost': 1200128,
+                              'ioiu': 39845888,
+                              'wwaf': '33.20'},
+                    2097152: {'iocnt': 38,
+                              'iohost': 1200128,
+                              'ioiu': 79691776,
+                              'wwaf': '66.40'}}}}
