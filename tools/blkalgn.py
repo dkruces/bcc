@@ -477,7 +477,8 @@ void start_request(struct pt_regs *ctx, struct request *req)
         lba_shift = bpf_log2(req->q->limits.logical_block_size);
         data.lba = req->__sector >> (lba_shift - SECTOR_SHIFT);
 
-        for (i=0; i<8; i++) {{
+        /* Max loop 2M: 4096 << 9 = 2097152 */
+        for (i=0; i<10; i++) {{
             is_algn = !(data.len % algn_size) && !(data.lba % lba_len);
             if (is_algn) {{
                 max_algn_size = algn_size;
