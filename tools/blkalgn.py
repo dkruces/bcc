@@ -7,9 +7,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License")
 #
 # 06-Nov-2023   Daniel Gomez   Created this.
-from __future__ import (
-    absolute_import, division, unicode_literals, print_function
-)
+from __future__ import absolute_import, division, unicode_literals, print_function
 from bcc import BPF
 import argparse
 import logging
@@ -19,6 +17,8 @@ import sqlite3
 import signal
 import sys
 import json
+import math
+import pprint
 
 examples = """examples:
   blkalgn                             # Observe all blk commands
@@ -50,6 +50,7 @@ examples = """examples:
     --algn "< 16384"                  # and alignment < 16k
 """
 
+# fmt: off
 parser = argparse.ArgumentParser(
     description="Block commands observer tool",
     formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -103,7 +104,7 @@ subparser = parser.add_subparsers(help="subcommand list", dest="cmd")
 dbparser = subparser.add_parser(
     "parser",
     help="db parser tool",
-    formatter_class=argparse.RawDescriptionHelpFormatter
+    formatter_class=argparse.RawDescriptionHelpFormatter,
 )
 dbparser.add_argument(
     "--info",
@@ -163,6 +164,7 @@ dbparser.add_argument(
     help="max alignment",
     action="append",
 )
+# fmt: on
 
 args = parser.parse_args()
 
@@ -172,9 +174,9 @@ if args.debug:
 
 logger = logging.getLogger(__name__)
 if args.output:
-    logging.basicConfig(filename=args.output, level=level, format='')
+    logging.basicConfig(filename=args.output, level=level, format="")
 else:
-    logging.basicConfig(level=level, format='')
+    logging.basicConfig(level=level, format="")
 
 
 def print_log2_histogram_tuples(data):
@@ -215,9 +217,7 @@ def open_and_validate_db_file():
     cursor.execute("PRAGMA table_info(events)")
     table_info = cursor.fetchall()
 
-    expected_columns = [
-        "id", "disk", "req", "len", "lba", "pid", "comm", "algn"
-    ]
+    expected_columns = ["id", "disk", "req", "len", "lba", "pid", "comm", "algn"]
     table_columns = [column[1] for column in table_info]
     if expected_columns != table_columns:
         logger.error("'events' table structure mismatch")
@@ -301,22 +301,18 @@ if args.cmd and "parser" in args.cmd:
             conn.close()
             exit()
 
-    twidth = [
-        max(max(5, len(str(item))) for item in col) for col in zip(*events)
-    ]
+    twidth = [max(max(5, len(str(item))) for item in col) for col in zip(*events)]
 
     if not count and events and len(events[0]) != 2:
         if len(events[0]) == 8:
-            header = [
-                "IDX", "DISK", "REQ", "LEN", "LBA", "PID", "COMM", "ALGN"
-            ]
-            header = ' '.join('{:<{}}'.format(field, width)
-                              for field, width in zip(header, twidth))
+            header = ["IDX", "DISK", "REQ", "LEN", "LBA", "PID", "COMM", "ALGN"]
+            header = " ".join(
+                "{:<{}}".format(field, width) for field, width in zip(header, twidth)
+            )
             print(header)
             for row in events:
                 formatted_row = " ".join(
-                    "{:<{}}".format(item, width)
-                    for item, width in zip(row, twidth)
+                    "{:<{}}".format(item, width) for item, width in zip(row, twidth)
                 )
                 print(formatted_row)
             print(f"Total: {len(events)}")
@@ -578,10 +574,7 @@ class BlkAlgnProcess:
     def __init__(self):
         signal.signal(signal.SIGTERM, self.handle_signal)
         signal.signal(signal.SIGINT, self.handle_signal)
-        self.json_output_data = {
-            "Block size": {},
-             "Algn size": {}
-        }
+        self.json_output_data = {"Block size": {}, "Algn size": {}}
         self.run = True
         self.bpf = bpf
         self.bpf["events"].open_ring_buffer(capture_event)
