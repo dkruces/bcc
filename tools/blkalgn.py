@@ -468,8 +468,9 @@ bpf_text += """
 void start_request(struct pt_regs *ctx, struct request *req)
 {{
         struct data_t data = {{}};
-        u32 max_algn_size = 4096, algn_size = 4096;
-        u32 lba_len = algn_size / 4096;
+        u32 lbs = req->q->limits.logical_block_size;
+        u32 max_algn_size = lbs, algn_size = lbs;
+        u32 lba_len = algn_size / lbs;
         bool is_algn = false;
         u8 i;
         u32 lba_shift;
@@ -483,7 +484,7 @@ void start_request(struct pt_regs *ctx, struct request *req)
                               req->q->disk->disk_name);
         data.op = req->cmd_flags & 0xff;
         data.len = req->__data_len;
-        lba_shift = bpf_log2(req->q->limits.logical_block_size);
+        lba_shift = bpf_log2(lbs);
         data.lba = req->__sector >> (lba_shift - SECTOR_SHIFT);
 
         /* Max loop 2M: 4096 << 9 = 2097152 */
@@ -493,7 +494,7 @@ void start_request(struct pt_regs *ctx, struct request *req)
                 max_algn_size = algn_size;
             }}
             algn_size = algn_size << 1;
-            lba_len = algn_size / 4096;
+            lba_len = algn_size / lbs;
         }}
         data.algn = max_algn_size;
 
