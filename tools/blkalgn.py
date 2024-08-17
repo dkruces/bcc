@@ -623,13 +623,13 @@ def waf_measure(event):
             iot *= iu
 
             # IU WAF per IO
-            iowaf = format(iot / event.len, ".2f")
+            iowaf = format(iot / event.len, ".8f")
             workload_waf[disk][lbs][iu]["ioiu"] += iot
             workload_waf[disk][lbs][iu]["iohost"] += event.len
             workload_waf[disk][lbs][iu]["wwaf"] = format(
                 workload_waf[disk][lbs][iu]["ioiu"]
                 / workload_waf[disk][lbs][iu]["iohost"],
-                ".2f",
+                ".8f",
             )
             logging.debug(f"* lbs: {lbs//1024}k, iu: {iu//1024}k")
             logging.debug(
