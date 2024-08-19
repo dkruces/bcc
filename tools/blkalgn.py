@@ -475,6 +475,7 @@ void start_request(struct pt_regs *ctx, struct request *req)
         bool is_algn = false;
         u8 i;
         u32 lba_shift;
+        u32 max_loop = 12;
 
         {disk_filter}
         {ops_filter}
@@ -488,8 +489,8 @@ void start_request(struct pt_regs *ctx, struct request *req)
         lba_shift = bpf_log2(lbs);
         data.lba = req->__sector >> (lba_shift - SECTOR_SHIFT);
 
-        /* Max loop 2M: 4096 << 9 = 2097152 */
-        for (i=0; i<10; i++) {{
+        max_loop = 21 - lba_shift; /* 1 << 21 = 2097152 */
+        for (i=0; i<max_loop; i++) {{
             is_algn = !(data.len % algn_size) && !(data.lba % lba_len);
             if (is_algn) {{
                 max_algn_size = algn_size;
