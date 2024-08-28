@@ -369,7 +369,8 @@ struct data_t {
 BPF_HISTOGRAM(block_len, u32, 64);
 BPF_HISTOGRAM(algn, u32, 64);
 BPF_ARRAY(counts, u64, 1);
-BPF_RINGBUF_OUTPUT(events, 8);
+/* Ring buffer max entries: 524288 * PAGE_SIZE */
+BPF_RINGBUF_OUTPUT(events, 524288);
 
 /* local strcmp function, max length 16 to protect instruction loops */
 #define CMPMAX	16
