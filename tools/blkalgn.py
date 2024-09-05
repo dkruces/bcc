@@ -489,8 +489,7 @@ void start_request(struct pt_regs *ctx, struct request *req)
         u32 lba_len = algn_size / lbs;
         bool is_algn = false;
         u8 i;
-        u32 lba_shift;
-        u32 max_loop = 12;
+        u32 lba_shift, max_loop;
 
         {disk_filter}
         {ops_filter}
@@ -505,13 +504,16 @@ void start_request(struct pt_regs *ctx, struct request *req)
         data.lba = req->__sector >> (lba_shift - SECTOR_SHIFT);
 
         max_loop = 21 - lba_shift; /* 1 << 21 = 2097152 */
-        for (i=0; i<max_loop; i++) {{
+
+        for (i=0; i<12; i++) {{
             is_algn = !(data.len % algn_size) && !(data.lba % lba_len);
             if (is_algn) {{
                 max_algn_size = algn_size;
             }}
             algn_size = algn_size << 1;
             lba_len = algn_size / lbs;
+            if (i >= max_loop)
+                break;
         }}
         data.algn = max_algn_size;
 
