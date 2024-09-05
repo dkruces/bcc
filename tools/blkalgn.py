@@ -26,6 +26,9 @@ examples = """examples:
   blkalgn --ops Read                  # Observe read commands on all NVMe
   blkalgn --ops Write                 # Observe write commands on all NVMe
   blkalgn --ops Write --disk nvme9n1  # Observe write commands on 9th NVMe node
+  blkalgn --ops Write --disk nvme9n1
+    --buffer 32                       # Observer write commands on 9th NVMe node
+                                      # and set ring buffer size to 32 * PAGE_SIZE
   blkalgn --debug                     # Print eBPF program before observe
   blkalgn --trace                     # Print NVMe captured events
   blkalgn --interval 0.1              # Poll data ring buffer every 100 ms
@@ -67,6 +70,12 @@ parser.add_argument(
     "--ops",
     type=str,
     help="capture this command operation only"
+)
+parser.add_argument(
+    "--buffer",
+    type=int,
+    default=512,
+    help="ring buffer size"
 )
 parser.add_argument("--debug", action="store_true", help="debug")
 parser.add_argument(
@@ -350,13 +359,19 @@ if args.capture:
     conn.close()
     logger.debug("Capturing commands into database...")
 
+def validate_ringbuffer_size():
+    """Ring buffer max entries: 524288 * PAGE_SIZE."""
+    if args.buffer >= 524288:
+        args.buffer = 524288
+
+validate_ringbuffer_size()
 
 # define BPF program
 bpf_text = """
 #include <uapi/linux/ptrace.h>
 #include <linux/blk-mq.h>
 
-struct data_t {
+struct data_t {{
     u32 pid;
     char comm[TASK_COMM_LEN];
     char disk[DISK_NAME_LEN];
@@ -364,33 +379,33 @@ struct data_t {
     u32 len;
     u32 lba;
     u32 algn;
-};
+}};
 
 BPF_HISTOGRAM(block_len, u32, 64);
 BPF_HISTOGRAM(algn, u32, 64);
 BPF_ARRAY(counts, u64, 1);
-/* Ring buffer max entries: 524288 * PAGE_SIZE */
-BPF_RINGBUF_OUTPUT(events, 524288);
+/* Ring buffer max entries: val * PAGE_SIZE */
+BPF_RINGBUF_OUTPUT(events, {rbuffer});
 
 /* local strcmp function, max length 16 to protect instruction loops */
 #define CMPMAX	16
 
 static int local_strcmp(const char *cs, const char *ct)
-{
+{{
     int len = 0;
     unsigned char c1, c2;
 
-    while (len++ < CMPMAX) {
+    while (len++ < CMPMAX) {{
         c1 = *cs++;
         c2 = *ct++;
         if (c1 != c2)
             return c1 < c2 ? -1 : 1;
         if (!c1)
             break;
-    }
+    }}
     return 0;
-}
-"""
+}}
+""".format(rbuffer=str(args.buffer))
 
 bpf_text_disk_filter = ""
 if args.disk:
