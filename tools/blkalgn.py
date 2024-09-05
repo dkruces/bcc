@@ -689,6 +689,32 @@ class BlkAlgnProcess:
     def handle_signal(self, signum, frame):
         self.run = False
 
+    def wwaf(self):
+        if not workload_waf:
+            return
+
+        for disk in workload_waf:
+            logging.info(f"Workload WAF ({disk}):")
+            all_lbs = sorted(workload_waf[disk].keys())
+            all_iu_sets = [set(workload_waf[disk][lbs].keys()) for lbs in all_lbs]
+            all_ius = sorted(set.union(*all_iu_sets))
+
+            # Print the header row
+            header = ["DISK", "IU"] + [f"WWAF (LBS: {lbs})" for lbs in all_lbs]
+            logging.info(" ".join(f"{col:<15}" for col in header))
+
+            # Print the rows
+            for iu in all_ius:
+                row = [disk, iu]
+                for lbs in all_lbs:
+                    if iu in workload_waf[disk][lbs]:  # Check if the IU exists for the LBS
+                        wwaf = workload_waf[disk][lbs][iu]["wwaf"]
+                        row.append(wwaf)
+
+                # Log the formatted row
+                logging.info(" ".join(f"{str(col):<15}" for col in row))
+            logging.debug("{}".format(pprint.pformat(workload_waf)))
+
     def _clear(self):
         self.bpf.ring_buffer_consume()
         db_commit_event(events_data_acc)
@@ -708,23 +734,7 @@ class BlkAlgnProcess:
             print(f"Algn size: {k.value - 1} - {v.value}")
             self.json_output_data["Algn size"][k.value - 1] = v.value
         self.algn.clear()
-        if workload_waf:
-            logging.info("Workload WAF:")
-            all_lbs = sorted(next(iter(workload_waf.values())).keys())
-            # Print the header row
-            header = ["DISK", "IU"] + [f"WWAF (LBS: {lbs//1024}k)" for lbs in all_lbs]
-            logging.info(" ".join(f"{col:<15}" for col in header))
-            # Print the rows
-            for disk in workload_waf:
-                for iu in workload_waf[disk][
-                    all_lbs[0]
-                ]:  # Iterate over IU based on the first LBS entry
-                    row = [disk, iu]
-                    for lbs in all_lbs:
-                        wwaf = workload_waf[disk][lbs][iu]["wwaf"]
-                        row.append(wwaf)
-                    logging.info(" ".join(f"{str(col):<15}" for col in row))
-            logging.debug("{}".format(pprint.pformat(workload_waf)))
+        self.wwaf()
 
     def clear(self):
         # Redirect stdout to a file
