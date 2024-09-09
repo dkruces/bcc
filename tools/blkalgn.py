@@ -375,7 +375,7 @@ struct data_t {{
     u32 pid;
     char comm[TASK_COMM_LEN];
     char disk[DISK_NAME_LEN];
-    u32 op;
+    u32 flags;
     u32 len;
     u32 lba;
     u32 algn;
@@ -498,7 +498,7 @@ void start_request(struct pt_regs *ctx, struct request *req)
         bpf_get_current_comm(&data.comm, sizeof(data.comm));
         bpf_probe_read_kernel(&data.disk, sizeof(data.disk),
                               req->q->disk->disk_name);
-        data.op = req->cmd_flags & 0xff;
+        data.flags = req->cmd_flags;
         data.len = req->__data_len;
         lba_shift = bpf_log2(lbs);
         data.lba = req->__sector >> (lba_shift - SECTOR_SHIFT);
@@ -534,8 +534,8 @@ bpf = BPF(text=bpf_text)
 if args.trace:
     logger.info("Tracing block commands... Hit Ctrl-C to end.")
     logger.info(
-        "%-10s %-8s %-8s %-10s %-10s %-16s %-8s"
-        % ("DISK", "OPS", "LEN", "LBA", "PID", "COMM", "ALGN")
+        "%-10s %-8s %-8s %-8s %-10s %-10s %-16s %-8s"
+        % ("DISK", "OPS", "FLAGS", "LEN", "LBA", "PID", "COMM", "ALGN")
     )
 
 if BPF.get_kprobe_functions(b"blk_mq_start_request"):
@@ -556,14 +556,16 @@ def capture_event(ctx, data, size):
 
 def print_event(event):
     try:
-        op = blk_ops[event.op]
+        op = blk_ops[event.flags & 0xff]
     except KeyError:
-        op = event.op
+        op = event.flags & 0xff
+    flags = hex(event.flags & 0xffffff)
     logger.info(
-        "%-10s %-8s %-8s %-10s %-10s %-16s %-8s"
+        "%-10s %-8s %-8s %-8s %-10s %-10s %-16s %-8s"
         % (
             event.disk.decode("utf-8", "replace"),
             op,
+            flags,
             event.len,
             event.lba,
             event.pid,
@@ -576,7 +578,7 @@ def print_event(event):
 def acc_event(event):
     event_data = (
         event.disk.decode("utf-8", "replace"),
-        event.op,
+        event.flags & 0xff,
         event.len,
         event.lba,
         event.pid,
@@ -600,9 +602,9 @@ def waf_measure(event):
         - IO_host: Input/Output in bytes sent from the host.
     """
     try:
-        op = blk_ops[event.op]
+        op = blk_ops[event.flags & 0xff]
     except KeyError:
-        op = event.op
+        op = event.flags & 0xff
 
     if op != "Write":
         return
