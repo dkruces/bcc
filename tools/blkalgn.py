@@ -27,7 +27,9 @@ examples = """examples:
   blkalgn --ops Write                 # Observe write commands on all NVMe
   blkalgn --ops Write --disk nvme9n1  # Observe write commands on 9th NVMe node
   blkalgn --ops Write --disk nvme9n1
-    --buffer 32                       # Observer write commands on 9th NVMe node
+    --buffer 32                       # Observe write commands on 9th NVMe node
+  blkalgn --flags Sync,Idle           # Observe Sync and Idle flags on 9th NVMe
+    --disk nvme9n1                    # node
                                       # and set ring buffer size to 32 * PAGE_SIZE
   blkalgn --debug                     # Print eBPF program before observe
   blkalgn --trace                     # Print NVMe captured events
@@ -70,6 +72,12 @@ parser.add_argument(
     "--ops",
     type=str,
     help="capture this command operation only"
+)
+parser.add_argument(
+    "-f",
+    "--flags",
+    type=str,
+    help="capture this flag only"
 )
 parser.add_argument(
     "--buffer",
@@ -452,6 +460,54 @@ blk_ops = {
     "Last": 36,
 }
 
+bpf_text_flags_filter = ""
+blk_flags = {
+    8: "FailFastDev",
+    9: "FailFastTransport",
+    10: "FailFastDriver",
+    11: "Sync",
+    12: "Meta",
+    13: "Prio",
+    14: "Nomerge",
+    15: "Idle",
+    16: "Integrity",
+    17: "Fua",
+    18: "PreFlush",
+    19: "RAHead",
+    20: "Background",
+    21: "NoWait",
+    22: "Polled",
+    23: "AllocCached",
+    24: "Swap",
+    25: "Drv",
+    26: "FSPrivate",
+    27: "Atomic",
+    28: "WriteZeroes",
+    29: "NrBits",
+    "FailFastDev": 8,
+    "FailFastTransport": 9,
+    "FailFastDriver": 10,
+    "Sync": 11,
+    "Meta": 12,
+    "Prio": 13,
+    "Nomerge": 14,
+    "Idle": 15,
+    "Integrity": 16,
+    "Fua": 17,
+    "PreFlush": 18,
+    "RAHead": 19,
+    "Background": 20,
+    "NoWait": 21,
+    "Polled": 22,
+    "AllocCached": 23,
+    "Swap": 24,
+    "Drv": 25,
+    "FSPrivate": 26,
+    "Atomic": 27,
+    "WriteZeroes": 28,
+    "NrBits": 29,
+}
+
 def get_device_data(disk):
     """Collect NVMe disk data from sysfs:
     - lbs (Logical Block Size).
@@ -480,6 +536,26 @@ if args.ops:
         ops=operation
     )
 
+if args.flags:
+    flags = 0
+    for f in args.flags.split(","):
+        _f = f.lower().capitalize()
+        try:
+            flags |= (1 << blk_flags[_f])
+        except KeyError:
+            print(f"Flag '{_f}' does not exist. Please, introduce any valid flag")
+            for k in blk_flags.keys():
+                if type(k) is str:
+                    print(f"{k}")
+            exit()
+
+    bpf_text_flags_filter = """
+        if (!(req->cmd_flags & {flags}))
+            return;
+    """.format(
+        flags=hex(flags)
+    )
+
 bpf_text += """
 void start_request(struct pt_regs *ctx, struct request *req)
 {{
@@ -493,6 +569,7 @@ void start_request(struct pt_regs *ctx, struct request *req)
 
         {disk_filter}
         {ops_filter}
+        {flags_filter}
 
         data.pid = bpf_get_current_pid_tgid() >> 32;
         bpf_get_current_comm(&data.comm, sizeof(data.comm));
@@ -522,7 +599,7 @@ void start_request(struct pt_regs *ctx, struct request *req)
         algn.increment(bpf_log2l(max_algn_size));
 }}
 """.format(
-    disk_filter=bpf_text_disk_filter, ops_filter=bpf_text_ops_filter
+    disk_filter=bpf_text_disk_filter, ops_filter=bpf_text_ops_filter, flags_filter=bpf_text_flags_filter
 )
 
 
