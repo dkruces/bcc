@@ -19,6 +19,7 @@ import sys
 import json
 import math
 import pprint
+import ctypes as ct
 
 examples = """examples:
   blkalgn                             # Observe all blk commands
@@ -385,8 +386,9 @@ struct data_t {{
     char disk[DISK_NAME_LEN];
     u32 flags;
     u32 len;
-    u32 lba;
+    u64 lba;
     u32 algn;
+    u64 sector;
 }};
 
 BPF_HISTOGRAM(block_len, u32, 64);
@@ -579,6 +581,8 @@ void start_request(struct pt_regs *ctx, struct request *req)
         data.len = req->__data_len;
         lba_shift = bpf_log2(lbs);
         data.lba = req->__sector >> (lba_shift - SECTOR_SHIFT);
+        data.sector = req->__sector;
+        bpf_trace_printk("k: sector: %llu\\n", data.sector);
 
         max_loop = 21 - lba_shift; /* 1 << 21 = 2097152 */
 
@@ -621,10 +625,23 @@ if BPF.get_kprobe_functions(b"blk_mq_start_request"):
 
 events_data_acc = []
 
+TASK_COMM_LEN = 16
+DISK_NAME_LEN = 32
+class Data(ct.Structure):
+    _fields_ = [("pid", ct.c_ulonglong),
+                ("comm", ct.c_char * TASK_COMM_LEN),
+                ("disk", ct.c_char * DISK_NAME_LEN),
+                ("flags", ct.c_ulonglong),
+                ("len", ct.c_ulonglong),
+                ("lba", ct.c_ulonglong),
+                ("algn", ct.c_ulonglong),
+                ("sector", ct.c_uint64)
+                ]
+
 
 def capture_event(ctx, data, size):
-    event = bpf["events"].event(data)
-    waf_measure(event)
+    # event = bpf["events"].event(data)
+    event = ct.cast(data, ct.POINTER(Data)).contents
     if args.trace:
         print_event(event)
     if args.capture:
@@ -637,19 +654,22 @@ def print_event(event):
     except KeyError:
         op = event.flags & 0xff
     flags = hex(event.flags & 0xffffff)
-    logger.info(
-        "%-10s %-8s %-8s %-8s %-10s %-10s %-16s %-8s"
-        % (
-            event.disk.decode("utf-8", "replace"),
-            op,
-            flags,
-            event.len,
-            event.lba,
-            event.pid,
-            event.comm.decode("utf-8", "replace"),
-            event.algn,
-        ),
-    )
+    # np.dtype(np.uint64)
+    # sector = np.dtype([event.sector, np.uint64])
+    logger.info("sector: {}".format(event.sector))
+    # logger.info(
+    #     "%-10s %-8s %-8s %-8s %-10s %-10s %-16s %-8s"
+    #     % (
+    #         event.disk.decode("utf-8", "replace"),
+    #         op,
+    #         flags,
+    #         event.len,
+    #         event.lba,
+    #         event.pid,
+    #         event.comm.decode("utf-8", "replace"),
+    #         event.algn,
+    #     ),
+    # )
 
 
 def acc_event(event):
