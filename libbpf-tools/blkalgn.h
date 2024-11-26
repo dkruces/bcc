@@ -31,4 +31,13 @@ struct event {
 	unsigned long long sector;
 };
 
+#define min(x, y) ({				\
+	typeof(x) _min1 = (x);			\
+	typeof(y) _min2 = (y);			\
+	(void) (&_min1 == &_min2);		\
+	_min1 < _min2 ? _min1 : _min2; })
+
+void print_linear_hist_sec(unsigned int *vals, int vals_size, unsigned int base,
+			   unsigned int step, const char *val_type);
+
 #endif /* __BLKALGN_H */
