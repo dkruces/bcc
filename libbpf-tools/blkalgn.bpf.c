@@ -16,6 +16,7 @@ const volatile bool filter_len = false;
 const volatile __u32 targ_len = 0;
 const volatile bool filter_comm = false;
 const volatile char targ_comm[TASK_COMM_LEN] = {};
+const volatile bool capture_stack = false;
 
 extern __u32 LINUX_KERNEL_VERSION __kconfig;
 
@@ -51,7 +52,7 @@ static __always_inline bool comm_allowed(const char *comm)
 	return true;
 }
 
-static int __always_inline trace_rq_issue(struct request *rq)
+static int __always_inline trace_rq_issue(void *ctx, struct request *rq)
 {
 	struct event *e;
 	u32 dev;
@@ -86,6 +87,13 @@ static int __always_inline trace_rq_issue(struct request *rq)
 	bpf_probe_read_kernel(&e->disk, sizeof(e->disk),
 			      rq->q->disk->disk_name);
 
+	if (capture_stack) {
+		e->kstack_sz =
+			bpf_get_stack(ctx, e->kstack, sizeof(e->kstack), 0);
+		e->ustack_sz = bpf_get_stack(ctx, e->ustack, sizeof(e->ustack),
+					     BPF_F_USER_STACK);
+	}
+
 	e->flags = rq->cmd_flags;
 	e->lbs = rq->q->limits.logical_block_size;
 	e->len = rq->__data_len;
@@ -105,7 +113,7 @@ int BPF_PROG(block_rq_issue)
 	 * to TP_PROTO(struct request *rq)
 	 */
 	if (LINUX_KERNEL_VERSION >= KERNEL_VERSION(5, 11, 0))
-		return trace_rq_issue((void *)ctx[0]);
+		return trace_rq_issue(ctx, (void *)ctx[0]);
 	else
-		return trace_rq_issue((void *)ctx[1]);
+		return trace_rq_issue(ctx, (void *)ctx[1]);
 }

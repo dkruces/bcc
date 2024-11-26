@@ -192,6 +192,7 @@ blkalgn: %: $(OUTPUT)/%.o $(COMMON_OBJ) $(LIBBPF_OBJ) | $(OUTPUT)
 
 ifeq ($(USE_BLAZESYM),1)
 $(patsubst %,$(OUTPUT)/%.o,$(BZ_APPS)): $(OUTPUT)/blazesym.h
+$(patsubst %,$(OUTPUT)/%.o,blkalgn): %.o: $(OUTPUT)/blazesym.h
 endif
 
 $(patsubst %,$(OUTPUT)/%.o,$(APPS)): %.o: %.skel.h
