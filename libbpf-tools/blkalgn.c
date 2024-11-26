@@ -17,6 +17,11 @@
 #include <string.h>
 #include "trace_helpers.h"
 #include <json-c/json.h>
+#include <stdlib.h>
+
+#include "blazesym.h"
+
+static blazesym *symbolizer;
 
 static struct env {
 	bool verbose;
@@ -28,6 +33,7 @@ static struct env {
 	unsigned int align;
 	char *comm;
 	int comm_len;
+	bool stacktrace;
 } env;
 
 const char *argp_program_version = "blkalgn 0.1";
@@ -93,6 +99,7 @@ static const struct argp_option opts[] = {
 	{ "length", 'l', "LENGTH", 0, "Trace this length only", 0 },
 	{ "alignment", 'a', "ALIGNMENT", 0, "Trace this alignment only", 0 },
 	{ "comm", 'c', "COMM", 0, "Trace this comm only", 0 },
+	{ "stacktrace", 's', NULL, 0, "Enable stack trace output", 0 },
 	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help", 0 },
 	{},
 };
@@ -161,6 +168,9 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state)
 		env.comm_len = (strlen(arg) + 1) > TASK_COMM_LEN ?
 				       TASK_COMM_LEN :
 				       (strlen(arg) + 1);
+		break;
+	case 's':
+		env.stacktrace = true;
 		break;
 	case ARGP_KEY_ARG:
 		argp_usage(state);
@@ -446,6 +456,87 @@ int _bpf_map_increase_slot(int fd, struct hkey key, struct hval val, __u32 slot,
 	return 0;
 }
 
+static void show_stack_trace(const __u64 *stack, int stack_sz, pid_t pid)
+{
+	const struct blazesym_result *result;
+	const struct blazesym_csym *sym;
+	sym_src_cfg src;
+	int i, j;
+
+	if (pid) {
+		src.src_type = SRC_T_PROCESS;
+		src.params.process.pid = pid;
+	} else {
+		src.src_type = SRC_T_KERNEL;
+		src.params.kernel.kallsyms = NULL;
+		src.params.kernel.kernel_image = NULL;
+	}
+
+	result = blazesym_symbolize(symbolizer, &src, 1,
+				    (const uint64_t *)stack, stack_sz);
+
+	for (i = 0; i < stack_sz; i++) {
+		if (!result || result->size <= i || !result->entries[i].size) {
+			printf("  %d [<%016llx>]\n", i, stack[i]);
+			continue;
+		}
+
+		if (result->entries[i].size == 1) {
+			sym = &result->entries[i].syms[0];
+			if (sym->path && sym->path[0]) {
+				printf("  %d [<%016llx>] %s+0x%llx %s:%ld\n", i,
+				       stack[i], sym->symbol,
+				       stack[i] - sym->start_address, sym->path,
+				       sym->line_no);
+			} else {
+				printf("  %d [<%016llx>] %s+0x%llx\n", i,
+				       stack[i], sym->symbol,
+				       stack[i] - sym->start_address);
+			}
+			continue;
+		}
+
+		printf("  %d [<%016llx>]\n", i, stack[i]);
+		for (j = 0; j < result->entries[i].size; j++) {
+			sym = &result->entries[i].syms[j];
+			if (sym->path && sym->path[0]) {
+				printf("        %s+0x%llx %s:%ld\n",
+				       sym->symbol,
+				       stack[i] - sym->start_address, sym->path,
+				       sym->line_no);
+			} else {
+				printf("        %s+0x%llx\n", sym->symbol,
+				       stack[i] - sym->start_address);
+			}
+		}
+	}
+
+	blazesym_result_free(result);
+}
+
+static void print_stack_trace(const struct event *e)
+{
+	if (e->kstack_sz <= 0 && e->ustack_sz <= 0)
+		printf("No stack\n");
+
+	if (e->kstack_sz > 0) {
+		printf("Kernel:\n");
+		show_stack_trace(e->kstack, e->kstack_sz / sizeof(__u64), 0);
+	} else {
+		printf("No Kernel Stack\n");
+	}
+
+	if (e->ustack_sz > 0) {
+		printf("Userspace:\n");
+		show_stack_trace(e->ustack, e->ustack_sz / sizeof(__u64),
+				 e->pid);
+	} else {
+		printf("No Userspace Stack\n");
+	}
+
+	printf("\n");
+}
+
 static int handle_event(void *ctx, void *data, size_t data_sz)
 {
 	const struct event *e = data;
@@ -481,6 +572,9 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 		printf("%-10s 0x%-8x %-8d %-8d %-21llu %-10d %-16s %-8d\n",
 		       e->disk, e->flags, e->flags & REQ_OP_MASK, e->len, lba,
 		       e->pid, e->comm, algn);
+
+	if (env.stacktrace)
+		print_stack_trace(e);
 
 	return 0;
 }
@@ -544,6 +638,9 @@ int main(int argc, char **argv)
 		strncpy((char*)obj->rodata->targ_comm, env.comm, env.comm_len);
 	}
 
+	if (env.stacktrace)
+		obj->rodata->capture_stack = true;
+
 	err = blkalgn_bpf__load(obj);
 	if (err) {
 		fprintf(stderr, "failed to load and verify BPF object\n");
@@ -558,6 +655,13 @@ int main(int argc, char **argv)
 
 	fd.halign = bpf_map__fd(obj->maps.halgn_map);
 	fd.hgran = bpf_map__fd(obj->maps.hgran_map);
+
+	symbolizer = blazesym_new();
+	if (!symbolizer) {
+		fprintf(stderr, "failed to load blazesym\n");
+		err = -ENOMEM;
+		goto cleanup;
+	}
 
 	printf("Tracing block device I/O... Hit Ctrl-C to end.\n");
 
@@ -591,6 +695,7 @@ int main(int argc, char **argv)
 		print_json(&fd);
 
 cleanup:
+	blazesym_free(symbolizer);
 	ring_buffer__free(rb);
 	partitions__free(partitions);
 	blkalgn_bpf__destroy(obj);

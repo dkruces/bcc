@@ -21,6 +21,12 @@ struct hval {
 	__u32 slots[MAX_SLOTS];
 };
 
+#ifndef MAX_STACK_DEPTH
+#define MAX_STACK_DEPTH 128
+#endif
+
+typedef __u64 stack_trace_t[MAX_STACK_DEPTH];
+
 struct event {
 	char comm[TASK_COMM_LEN];
 	char disk[NAME_LEN];
@@ -29,6 +35,10 @@ struct event {
 	unsigned lbs;
 	unsigned len;
 	unsigned long long sector;
+	__s32 kstack_sz;
+	__s32 ustack_sz;
+	stack_trace_t kstack;
+	stack_trace_t ustack;
 };
 
 #define min(x, y) ({				\
