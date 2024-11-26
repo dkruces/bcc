@@ -303,6 +303,54 @@ static int hash_to_json(int fd, json_object *jroot, const char *key)
 	return 0;
 }
 
+static void print_stars(unsigned int val, unsigned int val_max, int width)
+{
+	int num_stars, num_spaces, i;
+	bool need_plus;
+
+	num_stars = min(val, val_max) * width / val_max;
+	num_spaces = width - num_stars;
+	need_plus = val > val_max;
+
+	for (i = 0; i < num_stars; i++)
+		printf("*");
+	for (i = 0; i < num_spaces; i++)
+		printf(" ");
+	if (need_plus)
+		printf("+");
+}
+
+void print_linear_hist_sec(unsigned int *vals, int vals_size, unsigned int base,
+			   unsigned int step, const char *val_type)
+{
+	int i, stars_max = 40, idx_min = -1, idx_max = -1;
+	unsigned int val, val_max = 0;
+
+	for (i = 0; i < vals_size; i++) {
+		val = vals[i];
+		if (val > 0) {
+			idx_max = i;
+			if (idx_min < 0)
+				idx_min = i;
+		}
+		if (val > val_max)
+			val_max = val;
+	}
+
+	if (idx_max < 0)
+		return;
+
+	printf("     %-13s : count    distribution\n", val_type);
+	for (i = idx_min; i <= idx_max; i++) {
+		val = vals[i];
+		if (!val)
+			continue;
+		printf("        %-10d : %-8d |", (base + i * step) << 9, val);
+		print_stars(val, val_max, stars_max);
+		printf("|\n");
+	}
+}
+
 void print_histograms(struct map_fd_ctx *fd)
 {
 	struct hkey hg_key = {}, ha_key = {};
@@ -318,8 +366,8 @@ void print_histograms(struct map_fd_ctx *fd)
 					count += hg_value.slots[i];
 
 			printf("Total I/Os: %llu\n", count);
-			print_linear_hist(hg_value.slots, MAX_SLOTS, 0, 1,
-					  "sector");
+			print_linear_hist_sec(hg_value.slots, MAX_SLOTS, 0, 1,
+					      "Bytes");
 		}
 	}
 
