@@ -52,6 +52,7 @@ static struct partitions *partitions;
 struct map_fd_ctx {
 	int halign;
 	int hgran;
+	int stack_traces;
 };
 
 static const char *ops[] = {
@@ -537,6 +538,43 @@ static void print_stack_trace(const struct event *e)
 	printf("\n");
 }
 
+static void print_stackid_trace(const struct event *e, int stack_map_fd)
+{
+	__u64 stack[MAX_STACK_DEPTH];
+	int stack_sz;
+
+	if (e->kstack_id < 0 && e->ustack_id < 0) {
+		printf("No stack\n");
+		return;
+	}
+
+	if (e->kstack_id >= 0) {
+		printf("Kernel:\n");
+		stack_sz = bpf_map_lookup_elem(stack_map_fd, &e->kstack_id, stack);
+		if (stack_sz >= 0) {
+			show_stack_trace(stack, MAX_STACK_DEPTH, 0); // PID 0 for kernel
+		} else {
+			printf("Failed to retrieve kernel stack (id: %ld)\n", e->kstack_id);
+		}
+	} else {
+		printf("No Kernel Stack\n");
+	}
+
+	if (e->ustack_id >= 0) {
+		printf("Userspace:\n");
+		stack_sz = bpf_map_lookup_elem(stack_map_fd, &e->ustack_id, stack);
+		if (stack_sz >= 0) {
+			show_stack_trace(stack, MAX_STACK_DEPTH, e->pid);
+		} else {
+			printf("Failed to retrieve user stack (id: %ld)\n", e->ustack_id);
+		}
+	} else {
+		printf("No Userspace Stack\n");
+	}
+
+	printf("\n");
+}
+
 static int handle_event(void *ctx, void *data, size_t data_sz)
 {
 	const struct event *e = data;
@@ -575,6 +613,11 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 
 	if (env.stacktrace)
 		print_stack_trace(e);
+
+	printf("Uniq --------\n\n");
+	if (env.stacktrace)
+		print_stackid_trace(e, fd->stack_traces);
+	printf("Uniq -------- [END]\n\n");
 
 	return 0;
 }
@@ -655,6 +698,7 @@ int main(int argc, char **argv)
 
 	fd.halign = bpf_map__fd(obj->maps.halgn_map);
 	fd.hgran = bpf_map__fd(obj->maps.hgran_map);
+	fd.stack_traces = bpf_map__fd(obj->maps.stack_traces);
 
 	symbolizer = blazesym_new();
 	if (!symbolizer) {

@@ -41,6 +41,13 @@ struct {
 	__type(value, struct hval);
 } hgran_map SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_STACK_TRACE);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, 127 * sizeof(u64));
+	__uint(max_entries, 10000);
+} stack_traces SEC(".maps");
+
 static __always_inline bool comm_allowed(const char *comm)
 {
 	int i;
@@ -92,6 +99,9 @@ static int __always_inline trace_rq_issue(void *ctx, struct request *rq)
 			bpf_get_stack(ctx, e->kstack, sizeof(e->kstack), 0);
 		e->ustack_sz = bpf_get_stack(ctx, e->ustack, sizeof(e->ustack),
 					     BPF_F_USER_STACK);
+		e->kstack_id = bpf_get_stackid(ctx, &stack_traces, 0);
+		e->ustack_id =
+			bpf_get_stackid(ctx, &stack_traces, BPF_F_USER_STACK);
 	}
 
 	e->flags = rq->cmd_flags;

@@ -39,6 +39,8 @@ struct event {
 	__s32 ustack_sz;
 	stack_trace_t kstack;
 	stack_trace_t ustack;
+	long kstack_id;
+	long ustack_id;
 };
 
 #define min(x, y) ({				\
