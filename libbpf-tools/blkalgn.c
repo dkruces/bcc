@@ -24,6 +24,10 @@ static struct env {
 	char *ops;
 	char *json;
 	bool trace;
+	unsigned int len;
+	unsigned int align;
+	char *comm;
+	int comm_len;
 } env;
 
 const char *argp_program_version = "blkalgn 0.1";
@@ -86,6 +90,9 @@ static const struct argp_option opts[] = {
 	{ "ops", 'o', "OPS", 0, "Trace this ops only", 0 },
 	{ "json", 'j', "JSON", 0, "Output to JSON", 0 },
 	{ "trace", 't', NULL, 0, "Enable trace output", 0 },
+	{ "length", 'l', "LENGTH", 0, "Trace this length only", 0 },
+	{ "alignment", 'a', "ALIGNMENT", 0, "Trace this alignment only", 0 },
+	{ "comm", 'c', "COMM", 0, "Trace this comm only", 0 },
 	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help", 0 },
 	{},
 };
@@ -132,6 +139,28 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state)
 		break;
 	case 't':
 		env.trace = true;
+		break;
+	case 'l':
+		errno = 0;
+		env.len = strtol(arg, NULL, 10);
+		if (errno || env.len <= 0) {
+			fprintf(stderr, "Invalid length value: %s\n", arg);
+			argp_usage(state);
+		}
+		break;
+	case 'a':
+		errno = 0;
+		env.align = strtol(arg, NULL, 10);
+		if (errno || env.align <= 0) {
+			fprintf(stderr, "Invalid alignment value: %s\n", arg);
+			argp_usage(state);
+		}
+		break;
+	case 'c':
+		env.comm = arg;
+		env.comm_len = (strlen(arg) + 1) > TASK_COMM_LEN ?
+				       TASK_COMM_LEN :
+				       (strlen(arg) + 1);
 		break;
 	case ARGP_KEY_ARG:
 		argp_usage(state);
@@ -428,6 +457,9 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	__u64 lba = e->sector >> (lba_shift - SECTOR_SHIFT);
 	int err;
 
+	if (env.align && env.align != algn)
+		return 0;
+
 	err = _bpf_map_increase_slot(fd->hgran, hg_key, hg_value, e->len >> 9,
 				     e);
 	if (err)
@@ -500,6 +532,16 @@ int main(int argc, char **argv)
 		}
 		obj->rodata->filter_ops = true;
 		obj->rodata->targ_ops = op;
+	}
+
+	if (env.len) {
+		obj->rodata->filter_len = true;
+		obj->rodata->targ_len = env.len;
+	}
+
+	if (env.comm) {
+		obj->rodata->filter_comm = true;
+		strncpy((char*)obj->rodata->targ_comm, env.comm, env.comm_len);
 	}
 
 	err = blkalgn_bpf__load(obj);
