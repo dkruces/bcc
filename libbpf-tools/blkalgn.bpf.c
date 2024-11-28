@@ -12,6 +12,10 @@ const volatile bool filter_dev = false;
 const volatile __u32 targ_dev = 0;
 const volatile bool filter_ops = false;
 const volatile __u32 targ_ops = 0;
+const volatile bool filter_len = false;
+const volatile __u32 targ_len = 0;
+const volatile bool filter_comm = false;
+const volatile char targ_comm[TASK_COMM_LEN] = {};
 
 extern __u32 LINUX_KERNEL_VERSION __kconfig;
 
@@ -36,10 +40,22 @@ struct {
 	__type(value, struct hval);
 } hgran_map SEC(".maps");
 
+static __always_inline bool comm_allowed(const char *comm)
+{
+	int i;
+
+	for (i = 0; i < TASK_COMM_LEN && targ_comm[i] != '\0'; i++) {
+		if (comm[i] != targ_comm[i])
+			return false;
+	}
+	return true;
+}
+
 static int __always_inline trace_rq_issue(struct request *rq)
 {
 	struct event *e;
 	u32 dev;
+	char comm[TASK_COMM_LEN];
 
 	struct gendisk *disk = get_disk(rq);
 
@@ -52,6 +68,15 @@ static int __always_inline trace_rq_issue(struct request *rq)
 
 	if (filter_ops && targ_ops != (rq->cmd_flags & 0xff))
 		return 0;
+
+	if (filter_len && targ_len != (rq->__data_len))
+		return 0;
+
+	if (filter_comm) {
+		bpf_get_current_comm(&comm, sizeof(comm));
+		if (!comm_allowed(comm))
+			return 0;
+	}
 
 	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
 	if (!e)
