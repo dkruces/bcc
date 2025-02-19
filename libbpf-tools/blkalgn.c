@@ -254,13 +254,18 @@ void _json_object_init(json_object *jroot, const char *key,
 	}
 }
 
-static void _json_object_add_hval(json_object *jobj, struct hval *hist)
+static void _json_object_add_hval(json_object *jobj, struct hval *hist,
+				  const char *key)
 {
 	char s[12];
 
 	for (int i = 0; i < MAX_SLOTS; i++) {
 		if (hist->slots[i]) {
-			snprintf(s, sizeof(s), "%u", i);
+			/* Generate output in bytes */
+			if (strncmp("align", key, 5))
+				snprintf(s, sizeof(s), "%u", (i + 1) << 9);
+			else
+				snprintf(s, sizeof(s), "%u", 1 << i);
 			json_object_object_add(
 				jobj, s, json_object_new_int64(hist->slots[i]));
 		}
@@ -325,7 +330,7 @@ static int hash_to_json(int fd, json_object *jroot, const char *key)
 		json_object *jobj;
 		_json_object_init(jdisk, key, &jobj);
 
-		_json_object_add_hval(jobj, &val);
+		_json_object_add_hval(jobj, &val, key);
 
 		lookup_key = next_key;
 	}
