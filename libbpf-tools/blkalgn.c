@@ -544,8 +544,7 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	struct hkey hg_key, ha_key;
 	struct hval hg_value = {}, ha_value = {};
 	__u32 algn = align(e);
-	__u32 lba_shift = log2l(e->lbs);
-	__u64 lba = e->sector >> (lba_shift - SECTOR_SHIFT);
+	__u64 lba = e->sector << SECTOR_SHIFT;
 	int err;
 
 	if (env.align && env.align != algn)
