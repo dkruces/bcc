@@ -384,7 +384,8 @@ void print_linear_hist_sec(unsigned int *vals, int vals_size, unsigned int base,
 		val = vals[i];
 		if (!val)
 			continue;
-		printf("        %-10d : %-8d |", (base + i * step) << 9, val);
+		printf("        %-10d : %-8d |", ((base + i * step) + 1) << 9,
+		       val);
 		print_stars(val, val_max, stars_max);
 		printf("|\n");
 	}
