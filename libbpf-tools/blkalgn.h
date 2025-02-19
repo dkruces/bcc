@@ -7,7 +7,7 @@
 #define NAME_LEN 32
 #define TASK_COMM_LEN 16
 
-#define MAX_SLOTS 4096
+#define MAX_SLOTS 16384
 
 #define MINORBITS 20
 #define MINORMASK ((1U << MINORBITS) - 1)
