@@ -84,6 +84,7 @@ static int __always_inline trace_rq_issue(void *ctx, struct request *rq)
 		return 0;
 
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
+	e->pid = bpf_get_current_pid_tgid();
 	bpf_probe_read_kernel(&e->disk, sizeof(e->disk),
 			      rq->q->disk->disk_name);
 
