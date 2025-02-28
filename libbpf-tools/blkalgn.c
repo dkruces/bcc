@@ -263,7 +263,7 @@ static void _json_object_add_hval(json_object *jobj, struct hval *hist,
 		if (hist->slots[i]) {
 			/* Generate output in bytes */
 			if (strncmp("align", key, 5))
-				snprintf(s, sizeof(s), "%u", (i + 1) << 9);
+				snprintf(s, sizeof(s), "%u", (i) << 9);
 			else
 				snprintf(s, sizeof(s), "%u", 1 << i);
 			json_object_object_add(
@@ -389,8 +389,7 @@ void print_linear_hist_sec(unsigned int *vals, int vals_size, unsigned int base,
 		val = vals[i];
 		if (!val)
 			continue;
-		printf("        %-10d : %-8d |", ((base + i * step) + 1) << 9,
-		       val);
+		printf("        %-10d : %-8d |", ((base + i * step)) << 9, val);
 		print_stars(val, val_max, stars_max);
 		printf("|\n");
 	}
