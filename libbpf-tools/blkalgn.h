@@ -7,7 +7,7 @@
 #define NAME_LEN 32
 #define TASK_COMM_LEN 16
 
-#define MAX_SLOTS 16384 + 1
+#define MAX_SLOTS 32768 + 1
 
 #define MINORBITS 20
 #define MINORMASK ((1U << MINORBITS) - 1)
@@ -19,6 +19,7 @@ struct hkey {
 
 struct hval {
 	__u32 slots[MAX_SLOTS];
+	__u32 granularity;
 };
 
 #ifndef MAX_STACK_DEPTH
@@ -48,6 +49,7 @@ struct event {
 	_min1 < _min2 ? _min1 : _min2; })
 
 void print_linear_hist_sec(unsigned int *vals, int vals_size, unsigned int base,
-			   unsigned int step, const char *val_type);
+			   unsigned int step, const char *val_type,
+			   unsigned int gran);
 
 #endif /* __BLKALGN_H */
