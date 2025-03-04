@@ -263,7 +263,8 @@ static void _json_object_add_hval(json_object *jobj, struct hval *hist,
 		if (hist->slots[i]) {
 			/* Generate output in bytes */
 			if (strncmp("align", key, 5))
-				snprintf(s, sizeof(s), "%u", (i) << 9);
+				snprintf(s, sizeof(s), "%u",
+					 (i) << hist->granularity);
 			else
 				snprintf(s, sizeof(s), "%u", 1 << i);
 			json_object_object_add(
@@ -364,8 +365,9 @@ static void print_stars(unsigned int val, unsigned int val_max, int width)
 		printf("+");
 }
 
-void print_linear_hist_sec(unsigned int *vals, int vals_size, unsigned int base,
-			   unsigned int step, const char *val_type)
+void print_linear_hist_bytes(unsigned int *vals, int vals_size,
+			     unsigned int base, unsigned int step,
+			     const char *val_type, unsigned int gran)
 {
 	int i, stars_max = 40, idx_min = -1, idx_max = -1;
 	unsigned int val, val_max = 0;
@@ -389,7 +391,8 @@ void print_linear_hist_sec(unsigned int *vals, int vals_size, unsigned int base,
 		val = vals[i];
 		if (!val)
 			continue;
-		printf("        %-10d : %-8d |", ((base + i * step)) << 9, val);
+		printf("        %-10d : %-8d |", ((base + i * step)) << gran,
+		       val);
 		print_stars(val, val_max, stars_max);
 		printf("|\n");
 	}
@@ -410,8 +413,8 @@ void print_histograms(struct map_fd_ctx *fd)
 					count += hg_value.slots[i];
 
 			printf("Total I/Os: %llu\n", count);
-			print_linear_hist_sec(hg_value.slots, MAX_SLOTS, 0, 1,
-					      "Bytes");
+			print_linear_hist_bytes(hg_value.slots, MAX_SLOTS, 0, 1,
+						"Bytes", hg_value.granularity);
 		}
 	}
 
@@ -442,7 +445,7 @@ void print_json(struct map_fd_ctx *fd)
 }
 
 int _bpf_map_increase_slot(int fd, struct hkey key, struct hval val, __u32 slot,
-			   const struct event *e)
+			   __u32 gran, const struct event *e)
 {
 	strncpy(key.disk, e->disk, NAME_LEN);
 	if (slot >= MAX_SLOTS)
@@ -452,6 +455,8 @@ int _bpf_map_increase_slot(int fd, struct hkey key, struct hval val, __u32 slot,
 		val.slots[slot] += 1;
 	else
 		val.slots[slot] = 1;
+
+	val.granularity = gran;
 
 	if (bpf_map_update_elem(fd, &key, &val, BPF_ANY) != 0) {
 		fprintf(stderr, "failed to update map\n");
@@ -555,13 +560,13 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	if (env.align && env.align != algn)
 		return 0;
 
-	err = _bpf_map_increase_slot(fd->hgran, hg_key, hg_value, e->len >> 9,
-				     e);
+	err = _bpf_map_increase_slot(fd->hgran, hg_key, hg_value,
+				     e->len >> e->lbs, e->lbs, e);
 	if (err)
 		return err;
 
 	err = _bpf_map_increase_slot(fd->halign, ha_key, ha_value, log2l(algn),
-				     e);
+				     0, e);
 	if (err)
 		return err;
 
@@ -569,11 +574,11 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 		return 0;
 
 	if (check_ops(e->flags & REQ_OP_MASK))
-		printf("%-10s 0x%-8x %-8s %-8d %-21llu %-10d %-16s %-8d\n",
+		printf("%-10s 0x%-8x %-8s %-10d %-21llu %-10d %-16s %-8d\n",
 		       e->disk, e->flags, ops[e->flags & REQ_OP_MASK], e->len,
 		       lba, e->pid, e->comm, algn);
 	else
-		printf("%-10s 0x%-8x %-8d %-8d %-21llu %-10d %-16s %-8d\n",
+		printf("%-10s 0x%-8x %-8d %-10d %-21llu %-10d %-16s %-8d\n",
 		       e->disk, e->flags, e->flags & REQ_OP_MASK, e->len, lba,
 		       e->pid, e->comm, algn);
 
@@ -679,8 +684,9 @@ int main(int argc, char **argv)
 
 	/* Process events */
 	if (env.trace)
-		printf("%-10s %-10s %-8s %-8s %-21s %-10s %-16s %-8s\n", "DISK",
-		       "OPS", "FLAGS", "LEN", "LBA", "PID", "COMM", "ALGN");
+		printf("%-10s %-10s %-8s %-10s %-21s %-10s %-16s %-8s\n",
+		       "DISK", "OPS", "FLAGS", "LEN", "LBA", "PID", "COMM",
+		       "ALGN");
 	while (!exiting) {
 		err = ring_buffer__poll(rb, 100);
 		if (err == -EINTR) {
