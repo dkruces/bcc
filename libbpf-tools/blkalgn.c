@@ -405,8 +405,10 @@ void print_histograms(struct map_fd_ctx *fd)
 
 	while (bpf_map_get_next_key(fd->hgran, &hg_key, &hg_key) == 0) {
 		if (bpf_map_lookup_elem(fd->hgran, &hg_key, &hg_value) == 0) {
-			printf("\nI/O Granularity Histogram for Device %s\n",
-			       hg_key.disk);
+			printf("\nI/O Granularity Histogram for Device %s "
+			       "(lbads: %d - %lu bytes)\n",
+			       hg_key.disk, hg_value.granularity,
+			       1UL << hg_value.granularity);
 			for (int i = 0; i < MAX_SLOTS; i++)
 				if (hg_value.slots[i])
 					count += hg_value.slots[i];
