@@ -37,7 +37,7 @@ static struct env {
 } env;
 
 const char *argp_program_version = "blkalgn 0.1";
-const char *argp_program_bug_address = "<da.gomez@samsung.com>";
+const char *argp_program_bug_address = "Daniel Gomez <da.gomez@samsung.com>";
 const char argp_program_doc[] =
 	"BPF blkalgn application.\n"
 	"\n"
