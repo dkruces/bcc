@@ -421,7 +421,8 @@ void print_histograms(struct map_fd_ctx *fd)
 
 	while (bpf_map_get_next_key(fd->halign, &ha_key, &ha_key) == 0) {
 		if (bpf_map_lookup_elem(fd->halign, &ha_key, &ha_value) == 0) {
-			printf("\nI/O Alignment Histogram for Device %s\n", ha_key.disk);
+			printf("\nI/O Alignment Histogram for Device %s\n",
+			       ha_key.disk);
 			print_log2_hist(ha_value.slots, MAX_SLOTS, "Bytes");
 		}
 	}
@@ -646,7 +647,7 @@ int main(int argc, char **argv)
 
 	if (env.comm) {
 		obj->rodata->filter_comm = true;
-		strncpy((char*)obj->rodata->targ_comm, env.comm, env.comm_len);
+		strncpy((char *)obj->rodata->targ_comm, env.comm, env.comm_len);
 	}
 
 	if (env.stacktrace)
