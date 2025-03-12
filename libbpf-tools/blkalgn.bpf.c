@@ -36,7 +36,7 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 32768);
+	__uint(max_entries, 10240);
 	__type(key, struct hkey);
 	__type(value, struct hval);
 } hgran_map SEC(".maps");
