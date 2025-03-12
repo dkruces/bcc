@@ -20,13 +20,14 @@ ARCH ?= $(shell uname -m | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/' \
 			 | sed 's/riscv64/riscv/' | sed 's/loongarch.*/loongarch/' \
 			 | sed 's/s390x/s390/')
 BTFHUB_ARCHIVE ?= $(abspath btfhub-archive)
-ifeq ($(ARCH),x86)
-CARGO ?= $(shell which cargo)
-ifeq ($(strip $(CARGO)),)
-USE_BLAZESYM ?= 0
-else
-USE_BLAZESYM ?= 1
-endif
+
+ifeq ($(shell echo $(ARCH) | grep -E 'x86|arm64'),$(ARCH))
+  CARGO ?= $(shell which cargo)
+  ifeq ($(strip $(CARGO)),)
+    USE_BLAZESYM ?= 0
+  else
+    USE_BLAZESYM ?= 1
+  endif
 endif
 
 ifeq ($(wildcard $(ARCH)/),)
