@@ -554,13 +554,14 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	struct hval hg_value = {}, ha_value = {};
 	__u32 algn = align(e);
 	__u64 lba = e->sector << SECTOR_SHIFT;
+	__u64 lbs_shift = log2(e->lbs);
 	int err;
 
 	if (env.align && env.align != algn)
 		return 0;
 
 	err = _bpf_map_increase_slot(fd->hgran, hg_key, hg_value,
-				     e->len >> e->lbs, e->lbs, e);
+				     e->len >> lbs_shift, lbs_shift, e);
 	if (err)
 		return err;
 
