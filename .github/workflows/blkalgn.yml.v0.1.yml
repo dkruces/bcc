@@ -69,6 +69,15 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+        include:
+          - arch: x86_64
+            artifact_name: blkalgn-x86_64
+          - arch: aarch64
+            artifact_name: blkalgn-aarch64
+
     steps:
       - name: Checkout repository with full history
         uses: actions/checkout@v4
@@ -76,14 +85,18 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Download All Artifacts
+      - name: Download Artifact for ${{ matrix.arch }}
         uses: actions/download-artifact@v4
         with:
+          name: ${{ matrix.artifact_name }}
           path: release/
 
-      - name: Verify SHA256 checksum
+      - name: Verify SHA256 checksum for ${{ matrix.arch }}
         run: |
-          find release/ -name "*.sha256" -execdir sha256sum --check {} +
+          find release/
+          cd release
+          cat ${{ matrix.artifact_name }}.sha256
+          sha256sum --check ${{ matrix.artifact_name }}.sha256
 
       - name: Extract version from tag
         id: get_version
@@ -103,9 +116,7 @@ jobs:
           name: "blkalgn ${{ env.VERSION }}"
           body_path: changelog.md
           files: |
-            release/blkalgn-aarch64/blkalgn-aarch64
-            release/blkalgn-aarch64/blkalgn-aarch64.sha256
-            release/blkalgn-x86_64/blkalgn-x86_64
-            release/blkalgn-x86_64/blkalgn-x86_64.sha256
+            release/${{ matrix.artifact_name }}
+            release/${{ matrix.artifact_name }}.sha256
           prerelease: false
           draft: false
