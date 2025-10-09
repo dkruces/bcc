@@ -55,6 +55,39 @@ struct map_fd_ctx {
 	int halign_iosize;
 };
 
+/* WAF (Write Amplification Factor) data structures */
+#define NUM_IU_SIZES 12
+
+/* IU sizes to calculate WAF for (in bytes) */
+static const __u32 iu_sizes[NUM_IU_SIZES] = {
+	4096,      // 4KB
+	8192,      // 8KB
+	16384,     // 16KB
+	32768,     // 32KB
+	65536,     // 64KB
+	131072,    // 128KB
+	262144,    // 256KB
+	524288,    // 512KB
+	1048576,   // 1MB
+	2097152,   // 2MB
+	4194304,   // 4MB
+	8388608,   // 8MB
+};
+
+/* WAF statistics per IU size */
+struct waf_stats {
+	__u64 total_io_host;     // Total host I/O bytes
+	__u64 total_io_iu;       // Total IU-amplified I/O bytes
+	__u64 io_count;          // Number of I/Os
+	double wwaf;             // Workload WAF
+};
+
+/* Per-disk WAF results */
+struct disk_waf_results {
+	char disk[NAME_LEN];
+	struct waf_stats iu_stats[NUM_IU_SIZES];
+};
+
 static const char *ops[] = {
 	[REQ_OP_READ] = "Read",
 	[REQ_OP_WRITE] = "Write",
@@ -398,6 +431,230 @@ void print_linear_hist_bytes(unsigned int *vals, int vals_size,
 	}
 }
 
+/**
+ * calculate_waf_worst_case - Calculate worst-case WAF from alignment only
+ * @io_size: I/O size in bytes
+ * @alignment: I/O alignment in bytes (power of 2)
+ * @iu: Indirection Unit size in bytes (power of 2)
+ *
+ * Returns: WAF as a double (1.0 = no amplification)
+ *
+ * Since we only know alignment (not exact offset), we calculate worst-case WAF.
+ * This gives a conservative upper bound on write amplification.
+ */
+static double calculate_waf_worst_case(__u32 io_size, __u32 alignment, __u32 iu)
+{
+	__u64 off_adj;
+	__u64 io_iu;
+
+	/* Case 1: I/O is IU-aligned or larger */
+	if (alignment >= iu) {
+		off_adj = 0;
+	} else {
+		/* Case 2: Worst-case position within IU */
+		off_adj = iu - alignment;
+	}
+
+	/* Calculate total IU-aligned I/O needed (ceiling division) */
+	io_iu = ((off_adj + io_size + iu - 1) / iu) * iu;
+
+	return (double)io_iu / (double)io_size;
+}
+
+/**
+ * calculate_wwaf_from_map - Calculate WWAF for all IU sizes from alignment map
+ * @fd: File descriptor for halign_iosize_map
+ * @results: Output array to store per-disk WAF results
+ * @max_disks: Maximum number of disks to process
+ *
+ * Returns: Number of disks processed
+ *
+ * Iterates through the io_size_alignment map and calculates WWAF for each
+ * IU size by accumulating worst-case WAF across all (io_size, alignment) pairs.
+ */
+static int calculate_wwaf_from_map(int fd, struct disk_waf_results *results,
+				   int max_disks)
+{
+	struct hkey_iosize lookup_key = {}, next_key;
+	struct hval val;
+	int num_disks = 0;
+
+	/* Initialize results */
+	memset(results, 0, sizeof(struct disk_waf_results) * max_disks);
+
+	/* Iterate through io_size_alignment map */
+	while (!bpf_map_get_next_key(fd, &lookup_key, &next_key)) {
+		if (bpf_map_lookup_elem(fd, &next_key, &val) != 0) {
+			lookup_key = next_key;
+			continue;
+		}
+
+		/* Find or create disk entry */
+		int disk_idx = -1;
+		for (int i = 0; i < num_disks; i++) {
+			if (strncmp(results[i].disk, next_key.disk, NAME_LEN) == 0) {
+				disk_idx = i;
+				break;
+			}
+		}
+
+		if (disk_idx == -1) {
+			if (num_disks >= max_disks) {
+				fprintf(stderr, "Warning: too many disks, skipping %s\n",
+					next_key.disk);
+				lookup_key = next_key;
+				continue;
+			}
+			disk_idx = num_disks++;
+			strncpy(results[disk_idx].disk, next_key.disk, NAME_LEN);
+		}
+
+		/* Process each alignment bucket for this I/O size */
+		for (int slot = 0; slot < MAX_SLOTS; slot++) {
+			if (val.slots[slot] == 0)
+				continue;
+
+			__u32 alignment = 1 << slot;  // Power-of-2 alignment
+			__u64 count = val.slots[slot];
+			__u64 io_host = count * next_key.io_size;
+
+			/* Calculate WAF for each IU size */
+			for (int iu_idx = 0; iu_idx < NUM_IU_SIZES; iu_idx++) {
+				double waf = calculate_waf_worst_case(next_key.io_size,
+								      alignment,
+								      iu_sizes[iu_idx]);
+
+				__u64 io_iu = (__u64)(io_host * waf);
+
+				results[disk_idx].iu_stats[iu_idx].io_count += count;
+				results[disk_idx].iu_stats[iu_idx].total_io_host += io_host;
+				results[disk_idx].iu_stats[iu_idx].total_io_iu += io_iu;
+			}
+		}
+
+		lookup_key = next_key;
+	}
+
+	/* Calculate final WWAF for each (disk, IU) */
+	for (int i = 0; i < num_disks; i++) {
+		for (int j = 0; j < NUM_IU_SIZES; j++) {
+			if (results[i].iu_stats[j].total_io_host > 0) {
+				results[i].iu_stats[j].wwaf =
+					(double)results[i].iu_stats[j].total_io_iu /
+					(double)results[i].iu_stats[j].total_io_host;
+			} else {
+				results[i].iu_stats[j].wwaf = 1.0;
+			}
+		}
+	}
+
+	return num_disks;
+}
+
+/**
+ * print_waf_table - Print WWAF table to terminal
+ * @results: Array of per-disk WAF results
+ * @num_disks: Number of disks in results
+ *
+ * Prints a formatted table showing WWAF for each IU size.
+ */
+static void print_waf_table(struct disk_waf_results *results, int num_disks)
+{
+	printf("\n=== Workload Write Amplification Factor (WWAF) ===\n");
+
+	for (int i = 0; i < num_disks; i++) {
+		__u64 total_host = 0;
+		__u64 total_ios = 0;
+
+		/* Calculate totals */
+		for (int j = 0; j < NUM_IU_SIZES; j++) {
+			if (results[i].iu_stats[j].io_count > 0) {
+				total_host = results[i].iu_stats[j].total_io_host;
+				total_ios = results[i].iu_stats[j].io_count;
+				break;
+			}
+		}
+
+		printf("\nDevice: %s\n", results[i].disk);
+		printf("Total I/Os: %llu, Total Host I/O: %.2f MB\n\n",
+		       total_ios, total_host / (1024.0 * 1024.0));
+
+		/* Print header */
+		printf("%-12s %-12s %-15s %-15s %-15s\n",
+		       "IU Size", "IU (KB)", "WWAF", "IU I/O (MB)", "Amplification");
+		printf("%-12s %-12s %-15s %-15s %-15s\n",
+		       "----------", "----------", "-------------",
+		       "-------------", "-------------");
+
+		/* Print rows */
+		for (int j = 0; j < NUM_IU_SIZES; j++) {
+			struct waf_stats *s = &results[i].iu_stats[j];
+
+			if (s->io_count == 0)
+				continue;
+
+			double amp_pct = (s->wwaf - 1.0) * 100.0;
+
+			printf("%-12u %-12u %-15.4f %-15.2f %-14.2f%%\n",
+			       iu_sizes[j],
+			       iu_sizes[j] / 1024,
+			       s->wwaf,
+			       s->total_io_iu / (1024.0 * 1024.0),
+			       amp_pct);
+		}
+	}
+}
+
+/**
+ * waf_to_json - Add WAF statistics to JSON output
+ * @results: Array of per-disk WAF results
+ * @num_disks: Number of disks in results
+ * @jroot: JSON root object to add to
+ *
+ * Returns: 0 on success, -1 on error
+ */
+static int waf_to_json(struct disk_waf_results *results, int num_disks,
+		       json_object *jroot)
+{
+	json_object *jdisks, *jdisk, *jwaf, *jiu;
+
+	_json_object_init(jroot, "disks", &jdisks);
+
+	for (int i = 0; i < num_disks; i++) {
+		_json_object_init(jdisks, results[i].disk, &jdisk);
+		_json_object_init(jdisk, "waf", &jwaf);
+
+		for (int j = 0; j < NUM_IU_SIZES; j++) {
+			struct waf_stats *s = &results[i].iu_stats[j];
+
+			if (s->io_count == 0)
+				continue;
+
+			char iu_str[16];
+			snprintf(iu_str, sizeof(iu_str), "%u", iu_sizes[j]);
+
+			jiu = json_object_new_object();
+			json_object_object_add(jiu, "wwaf",
+					       json_object_new_double(s->wwaf));
+			json_object_object_add(jiu, "io_count",
+					       json_object_new_int64(s->io_count));
+			json_object_object_add(jiu, "io_host_mb",
+					       json_object_new_double(
+						       s->total_io_host / (1024.0 * 1024.0)));
+			json_object_object_add(jiu, "io_iu_mb",
+					       json_object_new_double(
+						       s->total_io_iu / (1024.0 * 1024.0)));
+			json_object_object_add(jiu, "amplification_pct",
+					       json_object_new_double(
+						       (s->wwaf - 1.0) * 100.0));
+
+			json_object_object_add(jwaf, iu_str, jiu);
+		}
+	}
+
+	return 0;
+}
+
 /*
  * Print alignment histograms grouped by I/O size
  * This shows the alignment quality for each I/O size category
@@ -467,6 +724,15 @@ void print_histograms(struct map_fd_ctx *fd)
 
 	/* Print per-I/O-size alignment histograms */
 	print_iosize_alignment_histograms(fd->halign_iosize);
+
+	/* Calculate and print WAF statistics */
+	struct disk_waf_results waf_results[16];  // Support up to 16 disks
+	int num_disks;
+
+	num_disks = calculate_wwaf_from_map(fd->halign_iosize, waf_results, 16);
+	if (num_disks > 0) {
+		print_waf_table(waf_results, num_disks);
+	}
 }
 
 /*
@@ -530,6 +796,15 @@ void print_json(struct map_fd_ctx *fd)
 
 	/* Add per-I/O-size alignment data */
 	hash_iosize_to_json(fd->halign_iosize, jroot, "io_size_alignment");
+
+	/* Add WAF statistics */
+	struct disk_waf_results waf_results[16];
+	int num_disks;
+
+	num_disks = calculate_wwaf_from_map(fd->halign_iosize, waf_results, 16);
+	if (num_disks > 0) {
+		waf_to_json(waf_results, num_disks, jroot);
+	}
 
 	fp = fopen(env.json, "w");
 	if (!fp) {
