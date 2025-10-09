@@ -43,7 +43,7 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 10240);
+	__uint(max_entries, 256);
 	__type(key, struct hkey_iosize);
 	__type(value, struct hval);
 } halign_iosize_map SEC(".maps");
