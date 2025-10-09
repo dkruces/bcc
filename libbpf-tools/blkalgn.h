@@ -17,6 +17,11 @@ struct hkey {
 	char disk[NAME_LEN];
 };
 
+struct hkey_iosize {
+	char disk[NAME_LEN];
+	__u32 io_size;
+};
+
 struct hval {
 	__u32 slots[MAX_SLOTS];
 	__u32 granularity;

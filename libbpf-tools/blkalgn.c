@@ -52,6 +52,7 @@ static struct partitions *partitions;
 struct map_fd_ctx {
 	int halign;
 	int hgran;
+	int halign_iosize;
 };
 
 static const char *ops[] = {
@@ -397,6 +398,43 @@ void print_linear_hist_bytes(unsigned int *vals, int vals_size,
 	}
 }
 
+/*
+ * Print alignment histograms grouped by I/O size
+ * This shows the alignment quality for each I/O size category
+ */
+static void print_iosize_alignment_histograms(int fd)
+{
+	struct hkey_iosize lookup_key = {}, next_key;
+	struct hval val;
+	__u64 total_ios;
+	int i;
+
+	printf("\n=== Alignment Distribution Per I/O Size ===\n");
+
+	while (!bpf_map_get_next_key(fd, &lookup_key, &next_key)) {
+		if (bpf_map_lookup_elem(fd, &next_key, &val) == 0) {
+			/* Calculate total I/Os for this size */
+			total_ios = 0;
+			for (i = 0; i < MAX_SLOTS; i++)
+				if (val.slots[i])
+					total_ios += val.slots[i];
+
+			/* Print header with I/O size info */
+			printf("\nDevice: %s, I/O Size: %u bytes (%u KB)\n",
+			       next_key.disk,
+			       next_key.io_size,
+			       next_key.io_size / 1024);
+			printf("Total I/Os: %llu\n", total_ios);
+
+			/* Print power-of-2 alignment histogram */
+			printf("Alignment Distribution:\n");
+			print_log2_hist(val.slots, MAX_SLOTS, "Bytes");
+		}
+
+		lookup_key = next_key;
+	}
+}
+
 void print_histograms(struct map_fd_ctx *fd)
 {
 	struct hkey hg_key = {}, ha_key = {};
@@ -426,6 +464,60 @@ void print_histograms(struct map_fd_ctx *fd)
 			print_log2_hist(ha_value.slots, MAX_SLOTS, "Bytes");
 		}
 	}
+
+	/* Print per-I/O-size alignment histograms */
+	print_iosize_alignment_histograms(fd->halign_iosize);
+}
+
+/*
+ * Generate JSON output for per-I/O-size alignment data
+ * Format: disks -> disk -> io_size_alignment -> io_size -> alignment histogram
+ */
+static int hash_iosize_to_json(int fd, json_object *jroot, const char *key)
+{
+	struct hkey_iosize lookup_key = {}, next_key;
+	struct hval val;
+	int err;
+
+	json_object *jdisks;
+	_json_object_init(jroot, "disks", &jdisks);
+
+	while (!bpf_map_get_next_key(fd, &lookup_key, &next_key)) {
+		err = bpf_map_lookup_elem(fd, &next_key, &val);
+		if (err < 0) {
+			fprintf(stderr, "failed to lookup iosize hist: %d\n", err);
+			return -1;
+		}
+
+		/* Get or create disk object */
+		json_object *jdisk;
+		_json_object_init(jdisks, next_key.disk, &jdisk);
+
+		/* Get or create io_size_alignment object */
+		json_object *jiosize_algn;
+		_json_object_init(jdisk, key, &jiosize_algn);
+
+		/* Create object for this specific I/O size */
+		char iosize_str[16];
+		snprintf(iosize_str, sizeof(iosize_str), "%u", next_key.io_size);
+		json_object *jiosize;
+		_json_object_init(jiosize_algn, iosize_str, &jiosize);
+
+		/* Add alignment histogram values */
+		/* Use power-of-2 format (like alignment, not granularity) */
+		for (int i = 0; i < MAX_SLOTS; i++) {
+			if (val.slots[i]) {
+				char align_str[16];
+				snprintf(align_str, sizeof(align_str), "%u", 1 << i);
+				json_object_object_add(jiosize, align_str,
+						      json_object_new_int64(val.slots[i]));
+			}
+		}
+
+		lookup_key = next_key;
+	}
+
+	return 0;
 }
 
 void print_json(struct map_fd_ctx *fd)
@@ -436,14 +528,19 @@ void print_json(struct map_fd_ctx *fd)
 	hash_to_json(fd->hgran, jroot, "granularity");
 	hash_to_json(fd->halign, jroot, "alignment");
 
+	/* Add per-I/O-size alignment data */
+	hash_iosize_to_json(fd->halign_iosize, jroot, "io_size_alignment");
+
 	fp = fopen(env.json, "w");
 	if (!fp) {
 		fprintf(stderr, "failed to open file: %s\n", env.json);
+		json_object_put(jroot);
 		return;
 	}
 	fprintf(fp, "%s\n",
 		json_object_to_json_string_ext(jroot, JSON_C_TO_STRING_PRETTY));
 	fclose(fp);
+	json_object_put(jroot);
 }
 
 int _bpf_map_increase_slot(int fd, struct hkey key, struct hval val, __u32 slot,
@@ -570,10 +667,12 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	const struct event *e = data;
 	struct map_fd_ctx *fd = (struct map_fd_ctx *)ctx;
 	struct hkey hg_key, ha_key;
-	struct hval hg_value = {}, ha_value = {};
+	struct hkey_iosize ha_iosize_key;
+	struct hval hg_value = {}, ha_value = {}, ha_iosize_value = {};
 	__u32 algn = align(e);
 	__u64 lba = e->sector << SECTOR_SHIFT;
 	__u64 lbs_shift = log2(e->lbs);
+	__u32 slot;
 	int err;
 
 	if (env.align && env.align != algn)
@@ -588,6 +687,33 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 				     0, e);
 	if (err)
 		return err;
+
+	/* Update per-I/O-size alignment histogram */
+	strncpy(ha_iosize_key.disk, e->disk, NAME_LEN);
+	ha_iosize_key.io_size = e->len;
+
+	slot = log2l(algn);
+	if (slot >= MAX_SLOTS)
+		slot = MAX_SLOTS - 1;
+
+	/* Lookup existing entry */
+	if (!bpf_map_lookup_elem(fd->halign_iosize, &ha_iosize_key,
+				 &ha_iosize_value)) {
+		/* Found - increment slot */
+		ha_iosize_value.slots[slot] += 1;
+	} else {
+		/* New entry - initialize */
+		memset(&ha_iosize_value, 0, sizeof(ha_iosize_value));
+		ha_iosize_value.slots[slot] = 1;
+		ha_iosize_value.granularity = e->len;
+	}
+
+	/* Update map */
+	if (bpf_map_update_elem(fd->halign_iosize, &ha_iosize_key,
+				&ha_iosize_value, BPF_ANY) != 0) {
+		fprintf(stderr, "failed to update per-iosize alignment map\n");
+		return 1;
+	}
 
 	if (!env.trace)
 		return 0;
@@ -683,6 +809,7 @@ int main(int argc, char **argv)
 
 	fd.halign = bpf_map__fd(obj->maps.halgn_map);
 	fd.hgran = bpf_map__fd(obj->maps.hgran_map);
+	fd.halign_iosize = bpf_map__fd(obj->maps.halign_iosize_map);
 
 	symbolizer = blaze_symbolizer_new();
 	if (!symbolizer) {
