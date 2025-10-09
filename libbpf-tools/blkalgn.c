@@ -21,7 +21,7 @@
 
 #include "blazesym.h"
 
-static blazesym *symbolizer;
+static blaze_symbolizer *symbolizer;
 
 static struct env {
 	bool verbose;
@@ -470,60 +470,76 @@ int _bpf_map_increase_slot(int fd, struct hkey key, struct hval val, __u32 slot,
 
 static void show_stack_trace(const __u64 *stack, int stack_sz, pid_t pid)
 {
-	const struct blazesym_result *result;
-	const struct blazesym_csym *sym;
-	sym_src_cfg src;
+	const struct blaze_syms *syms;
+	const struct blaze_sym *sym;
 	int i, j;
 
 	if (pid) {
-		src.src_type = SRC_T_PROCESS;
-		src.params.process.pid = pid;
+		struct blaze_symbolize_src_process src = {
+			.type_size = sizeof(src),
+			.pid = pid,
+		};
+		syms = blaze_symbolize_process_abs_addrs(symbolizer, &src,
+							  (const uint64_t *)stack,
+							  stack_sz);
 	} else {
-		src.src_type = SRC_T_KERNEL;
-		src.params.kernel.kallsyms = NULL;
-		src.params.kernel.kernel_image = NULL;
+		struct blaze_symbolize_src_kernel src = {
+			.type_size = sizeof(src),
+			.kallsyms = NULL,
+			.vmlinux = NULL,
+		};
+		syms = blaze_symbolize_kernel_abs_addrs(symbolizer, &src,
+							 (const uint64_t *)stack,
+							 stack_sz);
 	}
 
-	result = blazesym_symbolize(symbolizer, &src, 1,
-				    (const uint64_t *)stack, stack_sz);
-
 	for (i = 0; i < stack_sz; i++) {
-		if (!result || result->size <= i || !result->entries[i].size) {
+		if (!syms || i >= syms->cnt) {
 			printf("  %d [<%016llx>]\n", i, stack[i]);
 			continue;
 		}
 
-		if (result->entries[i].size == 1) {
-			sym = &result->entries[i].syms[0];
-			if (sym->path && sym->path[0]) {
-				printf("  %d [<%016llx>] %s+0x%llx %s:%ld\n", i,
-				       stack[i], sym->symbol,
-				       stack[i] - sym->start_address, sym->path,
-				       sym->line_no);
-			} else {
-				printf("  %d [<%016llx>] %s+0x%llx\n", i,
-				       stack[i], sym->symbol,
-				       stack[i] - sym->start_address);
-			}
+		sym = &syms->syms[i];
+		if (!sym->name) {
+			printf("  %d [<%016llx>]\n", i, stack[i]);
 			continue;
 		}
 
-		printf("  %d [<%016llx>]\n", i, stack[i]);
-		for (j = 0; j < result->entries[i].size; j++) {
-			sym = &result->entries[i].syms[j];
-			if (sym->path && sym->path[0]) {
-				printf("        %s+0x%llx %s:%ld\n",
-				       sym->symbol,
-				       stack[i] - sym->start_address, sym->path,
-				       sym->line_no);
+		if (sym->code_info.file && sym->code_info.file[0]) {
+			printf("  %d [<%016llx>] %s+0x%lx %s", i, stack[i],
+			       sym->name, sym->offset,
+			       sym->code_info.dir ? sym->code_info.dir : "");
+			if (sym->code_info.dir && sym->code_info.dir[0])
+				printf("/");
+			printf("%s:%u\n", sym->code_info.file,
+			       sym->code_info.line);
+		} else {
+			printf("  %d [<%016llx>] %s+0x%lx\n", i, stack[i],
+			       sym->name, sym->offset);
+		}
+
+		/* Print inlined functions if any */
+		for (j = 0; j < sym->inlined_cnt; j++) {
+			const struct blaze_symbolize_inlined_fn *inlined =
+				&sym->inlined[j];
+			if (inlined->code_info.file &&
+			    inlined->code_info.file[0]) {
+				printf("        %s %s", inlined->name,
+				       inlined->code_info.dir ?
+					       inlined->code_info.dir :
+					       "");
+				if (inlined->code_info.dir &&
+				    inlined->code_info.dir[0])
+					printf("/");
+				printf("%s:%u\n", inlined->code_info.file,
+				       inlined->code_info.line);
 			} else {
-				printf("        %s+0x%llx\n", sym->symbol,
-				       stack[i] - sym->start_address);
+				printf("        %s\n", inlined->name);
 			}
 		}
 	}
 
-	blazesym_result_free(result);
+	blaze_syms_free(syms);
 }
 
 static void print_stack_trace(const struct event *e)
@@ -668,9 +684,9 @@ int main(int argc, char **argv)
 	fd.halign = bpf_map__fd(obj->maps.halgn_map);
 	fd.hgran = bpf_map__fd(obj->maps.hgran_map);
 
-	symbolizer = blazesym_new();
+	symbolizer = blaze_symbolizer_new();
 	if (!symbolizer) {
-		fprintf(stderr, "failed to load blazesym\n");
+		fprintf(stderr, "failed to create blaze symbolizer\n");
 		err = -ENOMEM;
 		goto cleanup;
 	}
@@ -708,7 +724,7 @@ int main(int argc, char **argv)
 		print_json(&fd);
 
 cleanup:
-	blazesym_free(symbolizer);
+	blaze_symbolizer_free(symbolizer);
 	ring_buffer__free(rb);
 	partitions__free(partitions);
 	blkalgn_bpf__destroy(obj);

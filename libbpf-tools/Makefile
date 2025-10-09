@@ -173,7 +173,7 @@ $(OUTPUT)/libblazesym_c.a: $(LIBBLAZESYM_SRC) | $(OUTPUT)
 
 $(OUTPUT)/blazesym.h: $(LIBBLAZESYM_SRC) | $(OUTPUT)
 	$(call msg,INC,$@)
-	$(Q)cp blazesym/target/release/blazesym.h $@
+	$(Q)cp blazesym/capi/include/blazesym.h $@
 
 $(OUTPUT) $(OUTPUT)/libbpf $(BPFTOOL_OUTPUT):
 	$(call msg,MKDIR,$@)
