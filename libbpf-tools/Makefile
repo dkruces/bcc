@@ -7,7 +7,7 @@ BPFTOOL_OUTPUT ?= $(abspath $(OUTPUT)/bpftool)
 BPFTOOL ?= $(BPFTOOL_OUTPUT)/bootstrap/bpftool
 LIBBPF_SRC := $(abspath ../src/cc/libbpf/src)
 LIBBPF_OBJ := $(abspath $(OUTPUT)/libbpf.a)
-LIBBLAZESYM_SRC := $(abspath blazesym/target/release/libblazesym.a)
+LIBBLAZESYM_SRC := $(abspath blazesym/target/release/libblazesym_c.a)
 INCLUDES := -I$(OUTPUT) -I../src/cc/libbpf/include/uapi
 CFLAGS := -g -O2 -Wall -Wmissing-field-initializers -Werror -Werror=undef
 BPFCFLAGS := -g -O2 -Wall -Werror=undef
@@ -119,7 +119,7 @@ COMMON_OBJ = \
 
 ifeq ($(USE_BLAZESYM),1)
 COMMON_OBJ += \
-	$(OUTPUT)/libblazesym.a \
+	$(OUTPUT)/libblazesym_c.a \
 	$(OUTPUT)/blazesym.h \
 	#
 endif
@@ -156,7 +156,7 @@ CFLAGS += -DUSE_BLAZESYM=1
 endif
 
 ifeq ($(USE_BLAZESYM),1)
-LDFLAGS += $(OUTPUT)/libblazesym.a -lrt -lpthread -ldl
+LDFLAGS += $(OUTPUT)/libblazesym_c.a -lrt -lpthread -ldl
 endif
 
 .PHONY: clean
@@ -165,9 +165,9 @@ clean:
 	$(Q)rm -rf $(OUTPUT) $(APPS) $(APP_ALIASES) blkalgn
 
 $(LIBBLAZESYM_SRC)::
-	$(Q)cd blazesym && cargo build --release --features=cheader
+	$(Q)cd blazesym && cargo build --package=blazesym-c --release --features=generate-c-header
 
-$(OUTPUT)/libblazesym.a: $(LIBBLAZESYM_SRC) | $(OUTPUT)
+$(OUTPUT)/libblazesym_c.a: $(LIBBLAZESYM_SRC) | $(OUTPUT)
 	$(call msg,LIB,$@)
 	$(Q)cp $(LIBBLAZESYM_SRC) $@
 
