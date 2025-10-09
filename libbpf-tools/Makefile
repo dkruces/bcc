@@ -139,6 +139,11 @@ $(call allow-override,LD,$(CROSS_COMPILE)ld)
 .PHONY: all
 all: $(APPS) $(APP_ALIASES) blkalgn
 
+.PHONY: test
+test: test_waf
+	$(call msg,TEST,test_waf)
+	$(Q)./test_waf
+
 ifeq ($(V),1)
 Q =
 msg =
@@ -165,7 +170,7 @@ endif
 .PHONY: clean
 clean:
 	$(call msg,CLEAN)
-	$(Q)rm -rf $(OUTPUT) $(APPS) $(APP_ALIASES) blkalgn
+	$(Q)rm -rf $(OUTPUT) $(APPS) $(APP_ALIASES) blkalgn test_waf
 
 $(LIBBLAZESYM_SRC)/target/release/libblazesym_c.a::
 	$(Q)cd $(LIBBLAZESYM_SRC) && $(CARGO) build --release --package=blazesym-c
@@ -193,6 +198,10 @@ $(APPS): %: $(OUTPUT)/%.o $(COMMON_OBJ) $(LIBBPF_OBJ) | $(OUTPUT)
 blkalgn: %: $(OUTPUT)/%.o $(COMMON_OBJ) $(LIBBPF_OBJ) | $(OUTPUT)
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) $^ $(LDFLAGS) -lelf -lz -ljson-c -lm -o $@
+
+test_waf: test_waf.c
+	$(call msg,BINARY,$@)
+	$(Q)$(CC) $(CFLAGS) -o $@ $< -lm
 
 ifeq ($(USE_BLAZESYM),1)
 $(patsubst %,$(OUTPUT)/%.o,$(BZ_APPS)): $(OUTPUT)/blazesym.h
