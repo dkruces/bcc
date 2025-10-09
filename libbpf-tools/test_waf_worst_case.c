@@ -303,6 +303,54 @@ void test_realistic_workload(void)
 	}
 }
 
+void test_fio_workload(void)
+{
+	double wwaf;
+
+	printf("\n=== Test Case 8: FIO Test Workload (output-0000.txt) ===\n");
+
+	/* Actual captured workload from output-0000.txt:
+	 * From io_size_alignment map analysis:
+	 * - 3x 128KB @ 4KB alignment
+	 * - 3x 512KB @ 4KB alignment
+	 * - 3x 512KB @ 512KB alignment
+	 *
+	 * Total: 9 I/Os, 3.375 MB (3538944 bytes)
+	 *
+	 * Note: The test_waf_setup.sh script generates 21 I/Os total, but
+	 * blkalgn only captured 9. The 64KB writes completed too quickly.
+	 */
+	struct io_pattern patterns[] = {
+		{131072, 4096, 3},   /* 128KB @ 4KB alignment */
+		{524288, 4096, 3},   /* 512KB @ 4KB alignment */
+		{524288, 524288, 3}, /* 512KB @ 512KB alignment */
+	};
+
+	printf("\nActual captured workload (from blkalgn output):\n");
+	printf("  3x 128KB @ 4KB alignment\n");
+	printf("  3x 512KB @ 4KB alignment\n");
+	printf("  3x 512KB @ 512KB alignment\n");
+
+	/* Calculate total I/O */
+	__u64 total_io = 3*131072 + 3*524288 + 3*524288;
+	printf("  Total: 9 I/Os, %.2f MB\n\n", total_io / (1024.0 * 1024.0));
+
+	/* Test all 12 IU sizes */
+	printf("%-10s %-15s %-15s %-15s\n", "IU", "IU (KB)", "WWAF", "Amplification");
+	printf("%-10s %-15s %-15s %-15s\n", "--------", "--------", "-------------", "-------------");
+
+	__u32 ius[] = {4096, 8192, 16384, 32768, 65536, 131072, 262144,
+		       524288, 1048576, 2097152, 4194304, 8388608};
+
+	for (int i = 0; i < 12; i++) {
+		wwaf = calculate_wwaf(patterns, 3, ius[i]);
+		double amp_pct = (wwaf - 1.0) * 100.0;
+		printf("%-10u %-15u %-15.4f %-14.2f%%\n",
+		       ius[i], ius[i] / 1024, wwaf, amp_pct);
+	}
+
+}
+
 int main(void)
 {
 	printf("Worst-Case WAF Calculation Test Suite\n");
@@ -315,6 +363,7 @@ int main(void)
 	test_wwaf_accumulation();
 	test_all_iu_sizes();
 	test_realistic_workload();
+	test_fio_workload();
 
 	printf("\n=== All Tests Completed Successfully! ===\n");
 	return 0;
