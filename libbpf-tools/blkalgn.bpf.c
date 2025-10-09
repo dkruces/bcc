@@ -41,6 +41,13 @@ struct {
 	__type(value, struct hval);
 } hgran_map SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 10240);
+	__type(key, struct hkey_iosize);
+	__type(value, struct hval);
+} halign_iosize_map SEC(".maps");
+
 static __always_inline bool comm_allowed(const char *comm)
 {
 	int i;
