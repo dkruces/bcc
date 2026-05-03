@@ -268,6 +268,7 @@ install: $(APPS) $(APP_ALIASES) install-blkalgn
 	$(Q)$(foreach app,$(APPS),$(INSTALL) $(app) $(DESTDIR)$(bindir)/$(APP_PREFIX)$(app);)
 
 install-blkalgn: blkalgn
+	$(Q)$(INSTALL) -m 0755 -d $(DESTDIR)$(bindir)
 	$(Q)$(INSTALL) blkalgn $(DESTDIR)$(bindir)/$(APP_PREFIX)blkalgn
 
 .PHONY: force
